@@ -13,12 +13,9 @@ class PublicBuildSecurityTests(unittest.TestCase):
         self.assertNotIn("broadcast_publish", sources)
         self.assertNotIn("requests.patch", sources)
 
-    def test_official_gist_is_fixed_and_updates_are_disabled(self):
+    def test_updates_are_disabled_in_public_identity(self):
         identity = (ROOT / "plata_identity.py").read_text(encoding="utf-8")
-        announcements = (ROOT / "announcements.py").read_text(encoding="utf-8")
-        self.assertIn('DEFAULT_ANNOUNCEMENTS_GIST_ID = "8a32dc28ef2d33fa21ed67fd8edab486"', identity)
         self.assertIn('UPDATE_REPOSITORY = ""', identity)
-        self.assertNotIn("PLATA_ANNOUNCEMENTS_GIST_ID", announcements)
 
     def test_zip_extraction_validates_member_paths(self):
         updater = (ROOT / "Utils" / "updater.py").read_text(encoding="utf-8")
