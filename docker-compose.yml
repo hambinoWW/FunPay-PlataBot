@@ -1,0 +1,18 @@
+services:
+  plata:
+    build: .
+    container_name: plata
+    restart: unless-stopped
+    user: "10001:10001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import pathlib,sys; sys.exit(0 if pathlib.Path('main.py').exists() else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./configs:/app/configs
+      - ./logs:/app/logs
+      - ./storage:/app/storage
+      - ./plugins:/app/plugins

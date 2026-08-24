@@ -1,0 +1,31 @@
+[Install]
+WantedBy=multi-user.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/%i/PLATA
+ExecStart=/home/%i/pyvenv/bin/python /home/%i/PLATA/main.py
+Restart=always
+RestartSec=10s
+SyslogIdentifier=PLATA-%i
+User=%i
+Environment="LANG=en_US.utf8"
+Environment="PLATA_IS_RUNNING_AS_SERVICE=1"
+
+ExecStartPre=+/usr/bin/install -m 755 -o root -g root -d /run/PLATA
+ExecStartPre=+/usr/bin/install -m 755 -o %i -g root -d /run/PLATA/%i
+PIDFile=/run/PLATA/%i/PLATA.pid
+
+DevicePolicy=closed
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateMounts=yes
+PrivateTmp=yes
+PrivateUsers=yes
+ProtectHostname=yes
+ProtectSystem=full
+ReadWritePaths=/home/%i/PLATA /home/%i/pyvenv -/run/PLATA
+
+[Unit]
+After=network.target
+Description=PLATA FunPay Automation Service (on %I)
