@@ -57,34 +57,82 @@ from cardinal import Cardinal
 
 Плагин выполняет произвольный Python-код с правами пользователя. Устанавливайте расширения только из доверенных источников.
 
-## Установка
+## ⬇️ Установка
 
-### Windows
+Виртуальный сервер для PLATA можно арендовать, например, на [FirstByte](https://firstbyte.ru/). Для Linux выбирайте Ubuntu 22.04–24.04. Остальные параметры зависят от количества аккаунтов и нагрузки.
 
-1. Установите [Python 3.11+](https://www.python.org/downloads/).
-2. Распакуйте публичный архив PLATA.
-3. Запустите `Setup.bat`.
-4. Запустите `Start.bat` или выполните `python main.py`.
-5. Пройдите первоначальную настройку и откройте `/menu` в Telegram.
+### 🔷 Windows
 
-### Linux
+1. Скачайте и установите [Python 3.11.0](https://www.python.org/downloads/release/python-3110/).
+2. На первом экране установщика включите `Add python.exe to PATH`.
+3. Скачайте архив PLATA из раздела [Releases](https://github.com/hambinoWW/FunPay-PlataBot/releases) или клонируйте репозиторий:
+
+   ```powershell
+   git clone https://github.com/hambinoWW/FunPay-PlataBot.git
+   cd FunPay-PlataBot
+   ```
+
+4. Если используете ZIP, распакуйте его и перейдите в папку проекта.
+5. Запустите `Setup.bat` и дождитесь установки зависимостей.
+6. Закройте окно установки и запустите `Start.bat`.
+7. Пройдите мастер настройки в консоли: FunPay golden key, Telegram Bot Token и пароль панели.
+8. После запуска откройте Telegram и отправьте PLATA команду `/menu`.
+
+### ♨️ Linux (Ubuntu)
 
 ```bash
-python3 -m venv .venv
+sudo apt update
+sudo apt install -y git python3.11 python3.11-venv python3-pip
+git clone https://github.com/hambinoWW/FunPay-PlataBot.git
+cd FunPay-PlataBot
+python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -U pip
+python -m pip install -r requirements.txt
 python main.py
 ```
 
-### Docker
+Для фоновой работы используйте `PLATA@.service` или Docker. Не запускайте несколько копий с одним Telegram Bot Token.
+
+### 🐳 Docker
+
+Установите Docker Desktop (Windows/macOS) или Docker Engine и Docker Compose (Linux), затем перейдите в папку проекта:
 
 ```bash
+git clone https://github.com/hambinoWW/FunPay-PlataBot.git
+cd FunPay-PlataBot
 docker compose build
-docker compose up -d
-docker compose logs -f plata
 ```
 
-Контейнер запускается от непривилегированного пользователя. `configs`, `storage`, `logs` и `plugins` подключаются как volumes.
+При первом запуске PLATA запрашивает настройки через консоль, поэтому используйте разовый интерактивный контейнер:
+
+```bash
+docker compose run --rm plata
+```
+
+После завершения мастера запускайте PLATA в фоне:
+
+```bash
+docker compose up -d
+```
+
+Полезные команды:
+
+```bash
+# Логи
+docker compose logs -f plata
+
+# Остановить
+docker compose down
+
+# Перезапустить
+docker compose restart plata
+
+# Статус и healthcheck
+docker compose ps
+```
+
+Контейнер запускается от непривилегированного пользователя. Папки `configs`, `logs`, `storage` и `plugins` монтируются с хоста в контейнер, поэтому данные сохраняются между перезапусками и пересборками образа.
 
 ## Безопасность
 
