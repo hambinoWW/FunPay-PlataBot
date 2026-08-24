@@ -149,7 +149,7 @@ PLATA — независимый проект и не является офиц�
 
 `0.1.1`
 
-## Помощь
+## Контакты
 
 Обновления: [@funpayplata](https://t.me/funpayplata)  
 Плагины: [@quantumdeals](https://t.me/quantumdeals)  
