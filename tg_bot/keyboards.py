@@ -350,7 +350,7 @@ def commands_list(c: Cardinal, offset: int) -> K:
                                 CBT.CMD_LIST)
 
     kb.add(B(_("ar_to_ar"), None, f"{CBT.CATEGORY}:ar")) \
-        .add(B(_("ar_to_mm"), None, CBT.MAIN))
+        .add(B(_("ar_to_mm"), None, CBT.MAIN2))
     return kb
 
 
@@ -401,7 +401,7 @@ def products_files_list(offset: int, products_directory: str = "storage/products
                                       len(os.listdir(products_directory)), CBT.PRODUCTS_FILES_LIST)
 
     keyboard.add(B(_("ad_to_ad"), None, f"{CBT.CATEGORY}:ad")) \
-        .add(B(_("ad_to_mm"), None, CBT.MAIN))
+        .add(B(_("ad_to_mm"), None, CBT.MAIN2))
     return keyboard
 
 
@@ -451,7 +451,7 @@ def lots_list(cardinal: Cardinal, offset: int) -> K:
                                       len(cardinal.AD_CFG.sections()), CBT.AD_LOTS_LIST)
 
     keyboard.add(B(_("ad_to_ad"), None, f"{CBT.CATEGORY}:ad")) \
-        .add(B(_("ad_to_mm"), None, CBT.MAIN))
+        .add(B(_("ad_to_mm"), None, CBT.MAIN2))
     return keyboard
 
 
@@ -480,7 +480,7 @@ def funpay_lots_list(c: Cardinal, offset: int):
     keyboard.row(B(_("fl_manual"), None, f"{CBT.ADD_AD_TO_LOT_MANUALLY}:{offset}"),
                  B(_("gl_refresh"), None, f"update_funpay_lots:{offset}")) \
         .add(B(_("ad_to_ad"), None, f"{CBT.CATEGORY}:ad")) \
-        .add(B(_("ad_to_mm"), None, CBT.MAIN))
+        .add(B(_("ad_to_mm"), None, CBT.MAIN2))
     return keyboard
 
 
