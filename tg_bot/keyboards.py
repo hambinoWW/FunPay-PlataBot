@@ -160,7 +160,7 @@ def greeting_settings(c: Cardinal):
     if not only_new_chats:
         kb.add(B(_("gr_edit_cooldown").format(cd), None, CBT.EDIT_GREETINGS_COOLDOWN))
 
-    kb.add(B(_("gl_back"), None, CBT.MAIN2))
+    kb.add(B(_("gl_back"), None, CBT.MAIN))
     return kb
 
 
@@ -178,7 +178,7 @@ def order_confirm_reply_settings(c: Cardinal):
         .add(B(_("oc_watermark", bool_to_text(int(c.MAIN_CFG['OrderConfirm']['watermark']))),
                None, f"{CBT.SWITCH}:OrderConfirm:watermark")) \
         .add(B(_("oc_edit_message"), None, CBT.EDIT_ORDER_CONFIRM_REPLY_TEXT)) \
-        .add(B(_("gl_back"), None, CBT.MAIN2))
+        .add(B(_("gl_back"), None, CBT.MAIN))
     return kb
 
 
@@ -350,7 +350,7 @@ def commands_list(c: Cardinal, offset: int) -> K:
                                 CBT.CMD_LIST)
 
     kb.add(B(_("ar_to_ar"), None, f"{CBT.CATEGORY}:ar")) \
-        .add(B(_("ar_to_mm"), None, CBT.MAIN2))
+        .add(B(_("ar_to_mm"), None, CBT.MAIN))
     return kb
 
 
@@ -401,7 +401,7 @@ def products_files_list(offset: int, products_directory: str = "storage/products
                                       len(os.listdir(products_directory)), CBT.PRODUCTS_FILES_LIST)
 
     keyboard.add(B(_("ad_to_ad"), None, f"{CBT.CATEGORY}:ad")) \
-        .add(B(_("ad_to_mm"), None, CBT.MAIN2))
+        .add(B(_("ad_to_mm"), None, CBT.MAIN))
     return keyboard
 
 
@@ -451,7 +451,7 @@ def lots_list(cardinal: Cardinal, offset: int) -> K:
                                       len(cardinal.AD_CFG.sections()), CBT.AD_LOTS_LIST)
 
     keyboard.add(B(_("ad_to_ad"), None, f"{CBT.CATEGORY}:ad")) \
-        .add(B(_("ad_to_mm"), None, CBT.MAIN2))
+        .add(B(_("ad_to_mm"), None, CBT.MAIN))
     return keyboard
 
 
@@ -480,7 +480,7 @@ def funpay_lots_list(c: Cardinal, offset: int):
     keyboard.row(B(_("fl_manual"), None, f"{CBT.ADD_AD_TO_LOT_MANUALLY}:{offset}"),
                  B(_("gl_refresh"), None, f"update_funpay_lots:{offset}")) \
         .add(B(_("ad_to_ad"), None, f"{CBT.CATEGORY}:ad")) \
-        .add(B(_("ad_to_mm"), None, CBT.MAIN2))
+        .add(B(_("ad_to_mm"), None, CBT.MAIN))
     return keyboard
 
 
