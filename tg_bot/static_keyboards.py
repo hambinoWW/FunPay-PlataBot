@@ -22,6 +22,10 @@ def SETTINGS_SECTIONS() -> K:
              B(_("mm_stats"), callback_data="plata_menu:stats")) \
         .row(B(_("mm_templates"), callback_data=f"{CBT.TMPLT_LIST}:0"),
              B(_("mm_plugins"), callback_data="plata_menu:plugins")) \
+        .row(B("📦 Автовыдача", callback_data=f"{CBT.CATEGORY}:ad"),
+             B("🤖 Автоответчик", callback_data=f"{CBT.CATEGORY}:ar")) \
+        .row(B("👋 Приветствия", callback_data=f"{CBT.CATEGORY}:gr"),
+             B("✅ Подтверждение заказа", callback_data=f"{CBT.CATEGORY}:oc")) \
         .add(B("🦊 Модули", callback_data="plata_menu:modules")) \
         .add(B(_("mm_more"), callback_data=CBT.MAIN2))
 

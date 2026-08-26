@@ -107,11 +107,7 @@ def main_settings(c: Cardinal) -> K:
     if c.old_mode_enabled:
         kb = kb.add(B(_("gs_keep_sent_messages_unread", l('keepSentMessagesUnread')),
                       None, f"{p}:keepSentMessagesUnread"))
-    kb = kb.row(B("📦 Настроить автовыдачу", callback_data=f"{CBT.CATEGORY}:ad"),
-                B("🤖 Настроить автоответчик", callback_data=f"{CBT.CATEGORY}:ar")) \
-        .row(B("👋 Настроить приветствия", callback_data=f"{CBT.CATEGORY}:gr"),
-             B("✅ Настроить подтверждение", callback_data=f"{CBT.CATEGORY}:oc")) \
-        .add(B(_("gl_back"), callback_data="plata_menu:back"))
+    kb = kb.add(B(_("gl_back"), callback_data="plata_menu:back"))
     return kb
 
 

@@ -731,7 +731,7 @@ class TGBot:
                 f"{enabled('FunPay', 'autoDisable')} Автоотключение пустых лотов\n"
                 f"{enabled('Greetings', 'sendGreetings')} Приветствие покупателей\n"
                 f"{enabled('OrderConfirm', 'sendReply')} Ответ после подтверждения\n\n"
-                "Переключайте функции или открывайте их детальные настройки:")
+                "Переключайте автоматические функции кнопками ниже. Детальные настройки вынесены в главное меню.")
         self.bot.send_message(message.chat.id, text, reply_markup=kb.main_settings(self.cardinal))
 
     def send_notifications_center(self, message: Message):
