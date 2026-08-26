@@ -13,13 +13,15 @@ import hashlib
 import json
 from datetime import datetime, timezone
 import shutil
+import re
 
 logger = getLogger("PLATA.update_checker")
 localizer = Localizer()
 _ = localizer.translate
 
 HEADERS = {
-    "accept": "application/vnd.github+json"
+    "accept": "application/vnd.github+json",
+    "user-agent": "PLATA-update-checker",
 }
 
 
@@ -56,7 +58,7 @@ def get_tags(current_tag: str) -> list[str] | None:
             if page != 1:
                 time.sleep(1)
             response = requests.get(f"https://api.github.com/repos/{UPDATE_REPOSITORY}/tags?page={page}",
-                                    headers=HEADERS)
+                                    headers=HEADERS, timeout=15)
             if not response.status_code == 200 or not response.json():
                 logger.debug(f"Update status code is {response.status_code}!")
                 return None
@@ -102,35 +104,18 @@ def get_releases(from_tag: str) -> list[Release] | None:
     if not UPDATE_REPOSITORY:
         return None
     try:
-        page = 1
-        json_response: list[dict] = []
-        while not any([el.get("tag_name") == from_tag for el in json_response]):
-            if page != 1:
-                time.sleep(1)
-            response = requests.get(f"https://api.github.com/repos/{UPDATE_REPOSITORY}/releases?page={page}",
-                                    headers=HEADERS)
-            if not response.status_code == 200 or not response.json():
-                logger.debug(f"Update status code is {response.status_code}!")
-                return None
-            else:
-                json_response.extend(response.json())
-                page += 1
-        result = []
-        to_append = False
-        for el in json_response[::-1]:
-            if (name := el.get("tag_name")) == from_tag:
-                to_append = True
-
-            if to_append:
-                description = el.get("body")
-                sources = el.get("zipball_url")
-                if "#unskippable" in description:
-                    to_append = False
-                release = Release(name, description, sources)
-                result.append(release)
-                if not to_append:
-                    break
-        return result if result else None
+        tags = get_tags(from_tag)
+        if not tags:
+            return None
+        ordered = list(reversed(tags))
+        try:
+            start = ordered.index(from_tag)
+        except ValueError:
+            start = -1
+        newer = ordered[start + 1:] if start >= 0 else ordered[-1:]
+        return [Release(tag, f"Обновление PLATA {tag}",
+                        f"https://github.com/{UPDATE_REPOSITORY}/archive/refs/tags/{tag}.zip")
+                for tag in newer if re.fullmatch(r"v\d+\.\d+\.\d+", str(tag))]
     except:
         logger.debug("TRACEBACK", exc_info=True)
         return None
@@ -147,16 +132,17 @@ def get_new_releases(current_tag) -> int | list[Release]:
         2 - текущий тег является последним.
         3 - не удалось получить данные о релизе.
     """
+    if not UPDATE_REPOSITORY:
+        return 1
     tags = get_tags(current_tag)
     if tags is None:
         return 1
-
-    next_tag = get_next_tag(tags, current_tag)
-    if next_tag is None:
+    if current_tag in tags and tags.index(current_tag) == 0:
         return 2
-
-    releases = get_releases(next_tag)
-    if releases is None:
+    releases = get_releases(current_tag)
+    if not releases:
+        if current_tag in tags:
+            return 2
         return 3
     return releases
 

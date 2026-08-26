@@ -4,9 +4,8 @@ PRODUCT_NAME = "PLATA"
 PRODUCT_FULL_NAME = "PLATA FunPay Automation"
 PRODUCT_VERSION = "0.1.1"
 
-# Automatic updates are disabled in the public build until PLATA has a reviewed
-# release repository under the project owner's control.
-UPDATE_REPOSITORY = ""
+# Public PLATA releases are read from this repository's version tags.
+UPDATE_REPOSITORY = "hambinoWW/FunPay-PlataBot"
 
 # Existing Cardinal configuration files remain supported during migration.
 CONFIG_DIRECTORY = "configs"

@@ -15,7 +15,7 @@ class PublicBuildSecurityTests(unittest.TestCase):
 
     def test_updates_are_disabled_in_public_identity(self):
         identity = (ROOT / "plata_identity.py").read_text(encoding="utf-8")
-        self.assertIn('UPDATE_REPOSITORY = ""', identity)
+        self.assertIn('UPDATE_REPOSITORY = "hambinoWW/FunPay-PlataBot"', identity)
 
     def test_zip_extraction_validates_member_paths(self):
         updater = (ROOT / "Utils" / "updater.py").read_text(encoding="utf-8")
