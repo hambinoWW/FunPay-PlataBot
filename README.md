@@ -80,16 +80,19 @@ from cardinal import Cardinal
 
 ### ♨️ Linux (Ubuntu)
 
+Для быстрой установки выполните одну команду:
+
 ```bash
-sudo apt update
-sudo apt install -y git python3.11 python3.11-venv python3-pip
-git clone https://github.com/hambinoWW/FunPay-PlataBot.git
-cd FunPay-PlataBot
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install -U pip
-python -m pip install -r requirements.txt
-python main.py
+wget https://raw.githubusercontent.com/hambinoWW/FunPay-PlataBot/main/install-fplata.sh -O install-fplata.sh && bash install-fplata.sh
+```
+
+Скрипт установит PLATA в `~/PLATA`, создаст Python-окружение в `~/pyvenv`, установит зависимости и запустит мастер первичной настройки. Для установки без запуска используйте `bash install-fplata.sh --no-run`.
+
+После настройки можно включить автозапуск через systemd:
+
+```bash
+bash install-fplata.sh --no-run --service
+sudo systemctl start PLATA@"$USER".service
 ```
 
 Для фоновой работы используйте `PLATA@.service` или Docker. Не запускайте несколько копий с одним Telegram Bot Token.

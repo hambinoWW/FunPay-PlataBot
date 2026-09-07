@@ -16,6 +16,16 @@ Start.bat
 
 ## Linux
 
+Быстрая установка на Ubuntu:
+
+```bash
+wget https://raw.githubusercontent.com/hambinoWW/FunPay-PlataBot/main/install-fplata.sh -O install-fplata.sh && bash install-fplata.sh
+```
+
+Установщик ставит системные зависимости, клонирует проект в `~/PLATA`, создает окружение `~/pyvenv`, устанавливает зависимости и запускает мастер первичной настройки. Для установки без запуска используйте `bash install-fplata.sh --no-run`.
+
+Ручной запуск из уже скачанного проекта:
+
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
