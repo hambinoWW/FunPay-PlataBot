@@ -4,7 +4,7 @@ from pathlib import Path
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
-OUTPUT = ROOT / "dist" / "PLATA-0.1.1-public.zip"
+OUTPUT = ROOT / "dist" / "PLATA-0.1.2-public.zip"
 FILES = ["main.py", "first_setup.py", "plata_core.py", "plata.py", "plata_identity.py", "plata_accounts.py",
          "plata_runtime.py", "plata_analytics.py", "plata_plugins.py", "handlers.py",
          "requirements.txt", "Start.bat", "Setup.bat", "Dockerfile", "docker-compose.yml", ".dockerignore",
