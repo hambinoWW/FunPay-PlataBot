@@ -14,6 +14,8 @@ from configparser import ConfigParser
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from Utils.plata_tools import normalize_proxy
+
 
 REGISTRY_PATH = Path("configs/accounts.json")
 _LOCK = threading.RLock()
@@ -28,6 +30,72 @@ class AccountProfile:
     enabled: bool = True
     auto_delivery_path: str | None = None
     auto_response_path: str | None = None
+
+
+def _read_config(config_path: str | Path) -> ConfigParser:
+    config = ConfigParser(delimiters=(":",), interpolation=None)
+    config.optionxform = str
+    with open(config_path, "r", encoding="utf-8") as file:
+        config.read_file(file)
+    return config
+
+
+def _save_config(config: ConfigParser, config_path: str | Path) -> None:
+    path = Path(config_path)
+    temp = path.with_suffix(".tmp")
+    with temp.open("w", encoding="utf-8") as file:
+        config.write(file)
+    os.replace(temp, path)
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
+def read_account_proxy(config_path: str | Path) -> str | None:
+    """
+    Возвращает прокси аккаунта из его конфига.
+
+    :param config_path: путь до конфига аккаунта.
+    :return: прокси аккаунта или None, если прокси не задан.
+    """
+    try:
+        config = _read_config(config_path)
+    except (OSError, ValueError):
+        return None
+    try:
+        enabled = config["Proxy"].getboolean("enable", fallback=False) if "Proxy" in config else False
+    except ValueError:
+        enabled = False
+    if not enabled:
+        return None
+    value = (config["Proxy"].get("proxy") or "").strip()
+    if not value:
+        return None
+    try:
+        return normalize_proxy(value)
+    except ValueError:
+        return value
+
+
+def write_account_proxy(config_path: str | Path, proxy: str | None) -> str | None:
+    """
+    Записывает прокси аккаунта в его конфиг.
+
+    :param config_path: путь до конфига аккаунта.
+    :param proxy: прокси в формате login:password@ip:port или ip:port, None - отключить прокси.
+    :return: нормализованный прокси или None, если прокси отключен.
+    """
+    normalized = normalize_proxy(proxy)
+    config = _read_config(config_path)
+    if "Proxy" not in config:
+        config.add_section("Proxy")
+    config["Proxy"]["enable"] = "1" if normalized else "0"
+    config["Proxy"]["proxy"] = normalized or ""
+    if "check" not in config["Proxy"]:
+        config["Proxy"]["check"] = "0"
+    _save_config(config, config_path)
+    return normalized
 
 
 class AccountRegistry:
@@ -165,17 +233,15 @@ class AccountRegistry:
         with open(base_config_path, "r", encoding="utf-8") as file:
             config.read_file(file)
         config["FunPay"]["golden_key"] = golden_key
+        # Прокси у каждого аккаунта свой: новый профиль не наследует прокси базового аккаунта.
+        if "Proxy" not in config:
+            config.add_section("Proxy")
+        config["Proxy"]["enable"] = "0"
+        config["Proxy"]["proxy"] = ""
 
         config_path = Path("configs/accounts") / f"{account_id}.cfg"
         config_path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = config_path.with_suffix(".tmp")
-        with temp_path.open("w", encoding="utf-8") as file:
-            config.write(file)
-        os.replace(temp_path, config_path)
-        try:
-            os.chmod(config_path, 0o600)
-        except OSError:
-            pass
+        _save_config(config, config_path)
 
         delivery_path = config_path.with_name("auto_delivery.cfg")
         response_path = config_path.with_name("auto_response.cfg")
@@ -197,18 +263,7 @@ class AccountRegistry:
         profile = self.get(account_id)
         if profile is None:
             raise KeyError(account_id)
-        config = ConfigParser(delimiters=(":",), interpolation=None)
-        config.optionxform = str
-        with open(profile.config_path, "r", encoding="utf-8") as file:
-            config.read_file(file)
+        config = _read_config(profile.config_path)
         config["FunPay"]["golden_key"] = golden_key
-        path = Path(profile.config_path)
-        temp = path.with_suffix(".tmp")
-        with temp.open("w", encoding="utf-8") as file:
-            config.write(file)
-        os.replace(temp, path)
-        try:
-            os.chmod(path, 0o600)
-        except OSError:
-            pass
+        _save_config(config, profile.config_path)
         return profile

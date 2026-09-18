@@ -9,7 +9,9 @@ import time
 from typing import TYPE_CHECKING
 from tg_bot import utils, static_keyboards as skb, keyboards as kb, CBT
 import telebot.apihelper
-from Utils.plata_tools import validate_proxy, cache_proxy_dict, check_proxy, build_proxy
+from Utils.plata_tools import validate_proxy, check_proxy, build_proxy
+from Utils import plata_tools
+import plata_accounts
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B
 
 if TYPE_CHECKING:
@@ -49,15 +51,58 @@ def init_proxy_cp(crd: Cardinal, *args):
 
     Thread(target=check_proxies, daemon=True).start()
 
+    def sync_pool() -> dict:
+        """
+        Перечитывает общий список прокси с диска (его меняют и другие аккаунты).
+        """
+        runtime = getattr(crd, "runtime", None)
+        if runtime is not None:
+            return runtime.sync_proxy_pool()
+        pool = plata_tools.load_proxy_dict()
+        crd.proxy_dict = pool
+        return pool
+
+    def accounts_using_proxy(proxy: str) -> list[str]:
+        """
+        Возвращает названия аккаунтов, у которых настроен указанный прокси.
+        """
+        registry = getattr(crd, "account_registry", None)
+        if registry is None:
+            return []
+        names = []
+        for profile in registry.list():
+            configured = plata_accounts.read_account_proxy(profile.config_path)
+            if configured and configured == proxy:
+                names.append(profile.name or profile.account_id)
+        return names
+
     def open_proxy_list(c: CallbackQuery):
         """
         Открывает список прокси.
         """
         offset = int(c.data.split(":")[1])
+        sync_pool()
+        registry = getattr(crd, "account_registry", None)
+        account_id = getattr(crd, "account_profile_id", "primary")
+        profile = registry.get(account_id) if registry is not None else None
+        account = profile.name if profile is not None else account_id
         text = f'\n\nПрокси: {"вкл." if crd.MAIN_CFG["Proxy"].getboolean("enable") else "выкл."}\n' \
-               f'Проверка прокси: {"вкл." if crd.MAIN_CFG["Proxy"].getboolean("check") else "выкл."}'
+               f'Проверка прокси: {"вкл." if crd.MAIN_CFG["Proxy"].getboolean("check") else "выкл."}\n' \
+               + _("prx_account", utils.escape(account), utils.escape(str(account_id)))
         bot.edit_message_text(f'{_("desc_proxy")}{text}', c.message.chat.id, c.message.id,
                               reply_markup=kb.proxy(crd, offset, pr_dict))
+
+    def save_proxy(proxy: str) -> None:
+        """
+        Записывает прокси в конфиг активного аккаунта и применяет его сразу.
+        """
+        proxy_dict = plata_tools.build_proxy_dict(proxy)
+        crd.MAIN_CFG["Proxy"]["enable"] = "1"
+        crd.MAIN_CFG["Proxy"]["proxy"] = proxy
+        crd.save_config(crd.MAIN_CFG, "configs/_main.cfg")
+        crd.proxy = proxy_dict
+        if crd.account is not None:
+            crd.account.proxy = proxy_dict or None
 
     def act_add_proxy(c: CallbackQuery):
         """
@@ -77,14 +122,12 @@ def init_proxy_cp(crd: Cardinal, *args):
         tg.clear_state(m.chat.id, m.from_user.id, True)
         proxy = m.text
         try:
-            scheme, login, password, ip, port = validate_proxy(proxy)
-            proxy_str = build_proxy(scheme, login, password, ip, port)
-            if proxy_str in crd.proxy_dict.values():
+            proxy_str = plata_tools.normalize_proxy(proxy)
+            if proxy_str in sync_pool().values():
                 bot.send_message(m.chat.id, _("proxy_already_exists").format(utils.escape(proxy_str)), reply_markup=kb)
                 return
-            max_id = max(crd.proxy_dict.keys(), default=-1)
-            crd.proxy_dict[max_id + 1] = proxy_str
-            cache_proxy_dict(crd.proxy_dict)
+            plata_tools.register_proxy(proxy_str)
+            sync_pool()
             bot.send_message(m.chat.id, _("proxy_added").format(utils.escape(proxy_str)), reply_markup=kb)
             Thread(target=check_one_proxy, args=(proxy_str,), daemon=True).start()
         except ValueError:
@@ -108,14 +151,7 @@ def init_proxy_cp(crd: Cardinal, *args):
 
         scheme, login, password, ip, port = validate_proxy(proxy)
         proxy = build_proxy(scheme, login, password, ip, port)
-        proxy_dict = {
-            "http": proxy,
-            "https": proxy
-        }
-        crd.MAIN_CFG["Proxy"]["proxy"] = proxy
-        crd.save_config(crd.MAIN_CFG, "configs/_main.cfg")
-        if crd.MAIN_CFG["Proxy"].getboolean("enable"):
-            crd.account.proxy = proxy_dict
+        save_proxy(proxy)
         open_proxy_list(c)
 
     def delete_proxy(c: CallbackQuery):
@@ -126,12 +162,19 @@ def init_proxy_cp(crd: Cardinal, *args):
         offset = int(offset)
         proxy_id = int(proxy_id)
         c.data = f"{CBT.PROXY}:{offset}"
-        if proxy_id in crd.proxy_dict.keys():
-            proxy = crd.proxy_dict[proxy_id]
+        pool = sync_pool()
+        proxy = pool.get(proxy_id)
+        if proxy:
+            used_by = accounts_using_proxy(proxy)
+            if used_by:
+                bot.answer_callback_query(c.id, _("proxy_undeletable_account").format(", ".join(used_by)),
+                                          show_alert=True)
+                return
             now_proxy = crd.account.proxy
             if not now_proxy or now_proxy.get("http") != proxy:
-                del crd.proxy_dict[proxy_id]
-                cache_proxy_dict(crd.proxy_dict)
+                pool.pop(proxy_id, None)
+                plata_tools.cache_proxy_dict(pool)
+                sync_pool()
                 if proxy in pr_dict:
                     del pr_dict[proxy]
                 logger.info(f"Прокси {proxy} удалены.")

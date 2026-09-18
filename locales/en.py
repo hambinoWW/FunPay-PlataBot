@@ -268,6 +268,7 @@ proxy_added = "✅ Proxy <u>{}</u> added successfully."
 proxy_format = "❌ Proxies must be in the format <u>login:password@ip:port</u> or <u>ip:port</u>."
 proxy_adding_error = "❌ There was an error while adding the proxy."
 proxy_undeletable = "❌ This proxy cannot be deleted as it is currently in use."
+proxy_undeletable_account = "❌ This proxy cannot be deleted as it is used by account {}."
 
 act_edit_watermark = "Enter a new watermark text. For example:\n{}\n" \
                      "<code>🅟🅛🅐🅣🅐</code>\n<code>ℙ𝕃𝔸𝕋𝔸</code>\n" \
@@ -466,6 +467,7 @@ desc_pl = "Here you can get information about the plugins, as well as configure 
           " (/restart)"
 desc_au = "Here you can configure authorization in the Telegram control panel."
 desc_proxy = "Here you can set up the proxy."
+prx_account = "Account: <b>{}</b> (<code>{}</code>)"
 
 # - Commands desc
 cmd_menu = "open settings"

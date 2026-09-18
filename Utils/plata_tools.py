@@ -162,6 +162,51 @@ def build_proxy(scheme: str | None, login: str, password: str, ip: str, port: st
         return f"{scheme}://{ip}:{port}"
 
 
+def normalize_proxy(proxy: str | None) -> str | None:
+    """
+    Приводит прокси к единому виду (со схемой).
+
+    :param proxy: прокси в формате login:password@ip:port или ip:port.
+    :return: нормализованный прокси или None, если прокси не задан.
+    """
+    if proxy is None:
+        return None
+    proxy = str(proxy).strip()
+    if not proxy:
+        return None
+    return build_proxy(*validate_proxy(proxy))
+
+
+def build_proxy_dict(proxy: str | None) -> dict:
+    """
+    Собирает словарь прокси для requests / FunPayAPI.
+
+    :param proxy: прокси в формате login:password@ip:port или ip:port.
+    :return: словарь вида {"http": прокси, "https": прокси} или пустой словарь.
+    """
+    proxy = normalize_proxy(proxy)
+    if not proxy:
+        return {}
+    return {"http": proxy, "https": proxy}
+
+
+def register_proxy(proxy: str) -> tuple[str, bool]:
+    """
+    Добавляет прокси в общий список (storage/cache/proxy_dict.json), если его там еще нет.
+
+    :param proxy: прокси в формате login:password@ip:port или ip:port.
+    :return: (нормализованный прокси, True если прокси был добавлен в список).
+    """
+    normalized = normalize_proxy(proxy)
+    proxy_dict = load_proxy_dict()
+    if normalized in proxy_dict.values():
+        return normalized, False
+    max_id = max(proxy_dict.keys(), default=-1)
+    proxy_dict[max_id + 1] = normalized
+    cache_proxy_dict(proxy_dict)
+    return normalized, True
+
+
 def cache_proxy_dict(proxy_dict: dict[int, str]) -> None:
     """
     Кэширует список прокси.

@@ -10,11 +10,32 @@ from pathlib import Path
 import time
 
 import Utils.config_loader as cfg_loader
+from Utils import plata_tools
+import plata_accounts
 from plata import Plata
 from plata_modules import confirm_reminder
 
 
 logger = logging.getLogger("PLATA.runtime")
+
+
+def apply_proxy_to_instance(instance, proxy: str | None) -> None:
+    """
+    Применяет прокси к запущенному аккаунту без перезапуска.
+
+    :param instance: экземпляр PLATA.
+    :param proxy: прокси в формате login:password@ip:port или ip:port, None - отключить прокси.
+    """
+    normalized = plata_tools.normalize_proxy(proxy)
+    proxy_dict = plata_tools.build_proxy_dict(normalized)
+    if "Proxy" not in instance.MAIN_CFG:
+        instance.MAIN_CFG.add_section("Proxy")
+    instance.MAIN_CFG["Proxy"]["enable"] = "1" if normalized else "0"
+    instance.MAIN_CFG["Proxy"]["proxy"] = normalized or ""
+    instance.proxy = proxy_dict
+    account = getattr(instance, "account", None)
+    if account is not None:
+        account.proxy = proxy_dict or None
 
 
 class AccountTelegramProxy:
@@ -224,6 +245,37 @@ class PlataRuntime:
             if self.telegram is not None:
                 self.telegram.cardinal = instance
             return instance
+
+    def set_proxy(self, account_id: str, proxy: str | None) -> str | None:
+        """
+        Записывает прокси аккаунта в его конфиг и применяет его на лету, если аккаунт запущен.
+
+        :param account_id: ID аккаунта.
+        :param proxy: прокси в формате login:password@ip:port или ip:port, None - отключить прокси.
+        :return: нормализованный прокси или None, если прокси отключен.
+        """
+        profile = self.registry.get(account_id)
+        if profile is None:
+            raise KeyError(account_id)
+        normalized = plata_accounts.write_account_proxy(profile.config_path, proxy)
+        with self.account_lock:
+            instance = self.instances.get(account_id)
+            if instance is not None:
+                apply_proxy_to_instance(instance, normalized)
+        logger.info("Прокси аккаунта %s обновлён: %s", account_id, "включён" if normalized else "отключён")
+        return normalized
+
+    def sync_proxy_pool(self) -> dict:
+        """
+        Перечитывает общий список прокси с диска во всех запущенных аккаунтах.
+
+        :return: актуальный список прокси.
+        """
+        pool = plata_tools.load_proxy_dict()
+        with self.account_lock:
+            for instance in self.instances.values():
+                instance.proxy_dict = pool
+        return pool
 
     def disable(self, account_id: str) -> None:
         with self.account_lock:

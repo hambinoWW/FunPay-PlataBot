@@ -23,13 +23,14 @@ import telebot
 from telebot.apihelper import ApiTelegramException
 import logging
 import html
+import plata_accounts
 import plata_analytics
 import plata_plugins
 
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, Message, CallbackQuery, BotCommand, \
     InputFile
 from tg_bot import utils, static_keyboards as skb, keyboards as kb, CBT
-from Utils import cardinal_tools, updater
+from Utils import cardinal_tools, plata_tools, updater
 from locales.localizer import Localizer
 
 logger = logging.getLogger("TGBot")
@@ -528,6 +529,8 @@ class TGBot:
                          f"баланс {balance_text}")
             lines.append(f"   {summary['orders']} заказов · оборот {html.escape(totals or 'нет данных')}"
                          f" · активных продаж {active_sales if active_sales is not None else '—'}")
+            proxy = plata_accounts.read_account_proxy(profile.config_path)
+            lines.append(f"   🔌 Прокси: <code>{html.escape(proxy)}</code>" if proxy else "   🔌 Прокси: не задан")
             if runtime and profile.account_id in runtime.errors:
                 lines.append(f"   Ошибка: <code>{html.escape(runtime.errors[profile.account_id][:140])}</code>")
             action = profile.account_id
@@ -540,10 +543,13 @@ class TGBot:
                     B("🔄 Перезапустить", callback_data=f"pa:{action}:restart:{offset}"),
                     B("⏹ Отключить", callback_data=f"pa:{action}:disable:{offset}"),
                 )
+                keyboard.add(B("🔌 Прокси", callback_data=f"pap:{action}:open:{offset}"))
             elif profile.enabled:
-                keyboard.add(B("▶️ Запустить", callback_data=f"pa:{action}:enable:{offset}"))
+                keyboard.row(B("▶️ Запустить", callback_data=f"pa:{action}:enable:{offset}"),
+                             B("🔌 Прокси", callback_data=f"pap:{action}:open:{offset}"))
             else:
-                keyboard.add(B("▶️ Включить", callback_data=f"pa:{action}:enable:{offset}"))
+                keyboard.row(B("▶️ Включить", callback_data=f"pa:{action}:enable:{offset}"),
+                             B("🔌 Прокси", callback_data=f"pap:{action}:open:{offset}"))
         navigation = []
         if offset > 0:
             navigation.append(B("◀️", callback_data=f"pp:{max(0, offset - page_size)}"))
@@ -612,15 +618,41 @@ class TGBot:
             result = self.bot.send_message(message.chat.id, "Введите название аккаунта (или отправьте - для имени по ID).", reply_markup=skb.CLEAR_STATE_BTN())
             self.set_state(message.chat.id, result.id, message.from_user.id, "plata_add_account", data)
             return
+        if data.get("step") == "name":
+            data.update(step="proxy", name=data["account_id"] if value == "-" else value[:80])
+            result = self.bot.send_message(
+                message.chat.id,
+                "Введите прокси для этого аккаунта в формате <u>login:password@ip:port</u> или <u>ip:port</u>.\n"
+                "Отправьте <code>-</code>, если прокси не нужен.",
+                reply_markup=skb.CLEAR_STATE_BTN(),
+            )
+            self.set_state(message.chat.id, result.id, message.from_user.id, "plata_add_account", data)
+            return
         registry = getattr(self.cardinal, "account_registry", None)
         if registry is None:
             self.clear_state(message.chat.id, message.from_user.id)
             self.bot.send_message(message.chat.id, "Реестр аккаунтов PLATA не инициализирован.")
             return
-        name = data["account_id"] if value == "-" else value[:80]
+        proxy = None
+        if value != "-":
+            try:
+                proxy = plata_tools.normalize_proxy(value)
+            except ValueError:
+                self.bot.send_message(message.chat.id, "Некорректный прокси. Используйте формат <u>login:password@ip:port</u> или <u>ip:port</u>.")
+                return
+        name = data.get("name") or data["account_id"]
         try:
             profile = registry.create_from_base(data["account_id"], name, data["golden_key"])
             runtime = getattr(self, "runtime", None)
+            if runtime is not None and proxy:
+                try:
+                    proxy, _ = plata_tools.register_proxy(proxy)
+                    runtime.sync_proxy_pool()
+                    runtime.set_proxy(profile.account_id, proxy)
+                except Exception:
+                    logger.debug("TRACEBACK", exc_info=True)
+                    self.bot.send_message(message.chat.id,
+                                          "⚠️ Аккаунт создан, но прокси не применился — задайте его в карточке аккаунта.")
             if runtime is not None:
                 runtime.start_profile(profile)
         except ValueError as error:
@@ -633,7 +665,9 @@ class TGBot:
             self.bot.send_message(message.chat.id, f"Профиль создан, но не запущен: <code>{html.escape(str(error)[:200])}</code>")
             return
         self.clear_state(message.chat.id, message.from_user.id)
-        self.bot.send_message(message.chat.id, f"✅ Аккаунт <b>{html.escape(profile.name)}</b> добавлен и запущен.")
+        proxy_note = f"\n🔌 Прокси: <code>{html.escape(proxy)}</code>" if proxy else ""
+        self.bot.send_message(message.chat.id,
+                              f"✅ Аккаунт <b>{html.escape(profile.name)}</b> добавлен и запущен.{proxy_note}")
 
     def account_center_action(self, call: CallbackQuery):
         parts = call.data.split(":")

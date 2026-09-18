@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from configparser import ConfigParser
 
 from tg_bot import auto_response_cp, config_loader_cp, auto_delivery_cp, templates_cp, plugins_cp, file_uploader, \
-    authorized_users_cp, proxy_cp, default_cp
+    authorized_users_cp, proxy_cp, account_proxy_cp, default_cp
 from types import ModuleType
 import Utils.exceptions
 from uuid import UUID
@@ -654,7 +654,7 @@ class Plata(object):
             self.__init_telegram()
             active_cardinal = tg_bot.bot.ActiveCardinalProxy(self.telegram)
             for module in [auto_response_cp, auto_delivery_cp, config_loader_cp, templates_cp, plugins_cp,
-                           file_uploader, authorized_users_cp, proxy_cp]:
+                           file_uploader, authorized_users_cp, proxy_cp, account_proxy_cp]:
                 for handler in getattr(module, "BIND_TO_PRE_INIT", []):
                     handler(active_cardinal)
 
