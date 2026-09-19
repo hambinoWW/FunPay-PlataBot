@@ -698,7 +698,8 @@ def plugins_list(c: Cardinal, offset: int):
     return kb
 
 
-def edit_plugin(c: Cardinal, uuid: str, offset: int, ask_to_delete: bool = False):
+def edit_plugin(c: Cardinal, uuid: str, offset: int, ask_to_delete: bool = False,
+                missing_deps: list[str] | None = None):
     """
     Генерирует клавиатуру управления плагином.
 
@@ -706,6 +707,7 @@ def edit_plugin(c: Cardinal, uuid: str, offset: int, ask_to_delete: bool = False
     :param uuid: UUID плагина.
     :param offset: смещение списка плагинов.
     :param ask_to_delete: вставить ли подтверждение удаления плагина?
+    :param missing_deps: модули, которых не хватает плагину (для кнопки установки).
 
     :return: объект клавиатуры управления плагином.
     """
@@ -719,6 +721,9 @@ def edit_plugin(c: Cardinal, uuid: str, offset: int, ask_to_delete: bool = False
         kb.add(B(_("pl_commands"), None, f"{CBT.PLUGIN_COMMANDS}:{uuid}:{offset}"))
     if plugin_obj.settings_page:
         kb.add(B(_("pl_settings"), None, f"{CBT.PLUGIN_SETTINGS}:{uuid}:{offset}"))
+
+    if missing_deps:
+        kb.add(B(_("pl_install_deps"), None, f"{CBT.INSTALL_PLUGIN_DEPS}:{uuid}"))
 
     if not ask_to_delete:
         kb.add(B(_("gl_delete"), None, f"{CBT.DELETE_PLUGIN}:{uuid}:{offset}"))

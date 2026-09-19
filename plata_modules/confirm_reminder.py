@@ -165,16 +165,6 @@ def stop(account_id: str) -> None:
         _worker_tokens.pop(str(account_id), None)
 
 
-def clear_account(account_id: str) -> None:
-    account_id = str(account_id)
-    stop(account_id)
-    with _lock:
-        for key in list(_active):
-            if key.startswith(f"{account_id}:"):
-                _active.pop(key, None)
-        _save_state(account_id)
-
-
 def init(cardinal):
     account_id = str(getattr(cardinal, "account_profile_id", "primary"))
     with _lock:

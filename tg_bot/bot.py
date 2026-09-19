@@ -23,6 +23,7 @@ import telebot
 from telebot.apihelper import ApiTelegramException
 import logging
 import html
+import traceback
 import plata_accounts
 import plata_analytics
 import plata_plugins
@@ -94,14 +95,7 @@ class TGBot:
             "profile": "cmd_profile",
             "stats": "cmd_stats",
             "accounts": "cmd_accounts",
-            "use_account": "cmd_use_account",
-            "enable_account": "cmd_enable_account",
-            "disable_account": "cmd_disable_account",
-            "remove_account": "cmd_remove_account",
-            "account_health": "cmd_account_health",
             "stats_all": "cmd_stats_all",
-            "update_account_key": "cmd_update_account_key",
-            "rename_account": "cmd_rename_account",
             "restart": "cmd_restart",
             "check_updates": "cmd_check_updates",
             "update": "cmd_update",
@@ -272,6 +266,7 @@ class TGBot:
             try:
                 handler(message)
             except:
+                self.report_missing_dependency(handler, message.chat.id)
                 logger.error(_("log_tg_handler_error"))
                 logger.debug("TRACEBACK", exc_info=True)
 
@@ -290,8 +285,92 @@ class TGBot:
             try:
                 handler(call)
             except:
+                chat = getattr(call.message, "chat", None)
+                self.report_missing_dependency(handler, getattr(chat, "id", None))
                 logger.error(_("log_tg_handler_error"))
                 logger.debug("TRACEBACK", exc_info=True)
+
+    def report_missing_dependency(self, handler, chat_id: int | None = None) -> bool:
+        """
+        Проверяет, вызвано ли последнее исключение отсутствием Python-библиотеки,
+        и предлагает установить ее одной кнопкой.
+
+        :param handler: хэндлер, в котором произошла ошибка.
+        :param chat_id: чат, куда отправить предложение об установке.
+
+        :return: True, если ошибка связана с отсутствующей библиотекой.
+        """
+        modules = plata_plugins.extract_missing_modules(traceback.format_exc())
+        if not modules:
+            return False
+        key = getattr(handler, "plugin_uuid", None) or self.plugin_key_for_handler(handler)
+        if not key:
+            return False
+        new_modules = plata_plugins.record_missing(key, modules, "runtime")
+        if new_modules:
+            self.notify_missing_dependency(key, new_modules, chat_id)
+        return True
+
+    def plugin_key_for_handler(self, handler) -> str | None:
+        """
+        Определяет UUID плагина по модулю хэндлера Telegram-панели.
+
+        :param handler: хэндлер, зарегистрированный плагином.
+
+        :return: UUID плагина или None.
+        """
+        module = getattr(handler, "__module__", None) or ""
+        if not module.startswith("plugins."):
+            return None
+        file_name = f"{module.split('.', 1)[1]}.py"
+        for uuid, plugin in self.cardinal.plugins.items():
+            if os.path.basename(plugin.path) == file_name:
+                return uuid
+        return None
+
+    def notify_missing_dependency(self, key: str, modules: list[str],
+                                  chat_id: int | None = None) -> None:
+        """
+        Сообщает, что плагину не хватает библиотек, с кнопкой установки.
+
+        :param key: UUID плагина или file:<имя файла>.
+        :param modules: имена отсутствующих модулей.
+        :param chat_id: чат для сообщения (None — все чаты уведомлений).
+        """
+        plugin = self.cardinal.plugins.get(key)
+        name = plugin.name if plugin is not None else key.split(":", 1)[-1]
+        packages = ", ".join(plata_plugins.packages_for(modules))
+        text = _("pl_missing_deps_notify", utils.escape(name), utils.escape(packages))
+        keyboard = K().add(B(_("pl_install_deps"), None, f"{CBT.INSTALL_PLUGIN_DEPS}:{key}"))
+        if chat_id is None:
+            self.send_notification(text, keyboard, notification_type=NotificationTypes.critical)
+            return
+        try:
+            self.bot.send_message(chat_id, text, reply_markup=keyboard)
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+
+    def notify_pending_missing_dependencies(self) -> None:
+        """
+        Напоминает в уведомлениях о плагинах, которым до сих пор не хватает библиотек.
+        """
+        entries = [(key, sorted(set(data.get("modules") or [])))
+                   for key, data in plata_plugins.load_missing().items()]
+        entries = [(key, modules) for key, modules in entries if modules]
+        if not entries:
+            return
+        lines = ["<b>📦 Плагинам не хватает библиотек</b>", ""]
+        keyboard = K()
+        for key, modules in entries[:8]:
+            plugin = self.cardinal.plugins.get(key)
+            name = plugin.name if plugin is not None else key.split(":", 1)[-1]
+            packages = ", ".join(plata_plugins.packages_for(modules))
+            lines.append(f"• <b>{utils.escape(name)}</b>: <code>{utils.escape(packages)}</code>")
+            keyboard.add(B(f"📦 {name}"[:48], None, f"{CBT.INSTALL_PLUGIN_DEPS}:{key}"))
+        lines.append("")
+        lines.append("Нажмите кнопку, чтобы установить зависимости.")
+        self.send_notification("\n".join(lines), keyboard,
+                               notification_type=NotificationTypes.important_announcement)
 
     def mdw_handler(self, handler, **kwargs):
         """
@@ -388,24 +467,52 @@ class TGBot:
         turnover = ", ".join(f"{value:g} {currency}" for currency, value in today["totals"].items()) or "нет продаж"
         runtime = getattr(self, "runtime", None)
         errors = len(getattr(runtime, "errors", {})) if runtime else 0
-        return (f"<b>PLATA · Рабочая панель</b>\n"
-                f"🟢 Система онлайн · ошибок <b>{errors}</b>\n\n"
-                f"👤 <b>@{username}</b> · <b>{account_label}</b>\n"
-                f"💰 Баланс: <b>{balance_text}</b>\n"
-                f"🛒 Сегодня: <b>{today['sales']}</b> продаж\n"
-                f"📈 Оборот: <b>{html.escape(turnover)}</b>\n"
-                f"↩️ Возвраты: <b>{today['refunds']}</b>\n\n"
-                "Выберите раздел:")
+        offline = self._selected_account_offline()
+        lines = [
+            "<b>PLATA · Рабочая панель</b>",
+            (f"🟠 Настройка без запуска · ошибок <b>{errors}</b>" if offline
+             else f"🟢 Система онлайн · ошибок <b>{errors}</b>"),
+            "",
+            f"👤 <b>@{username}</b> · <b>{account_label}</b>",
+            f"💰 Баланс: <b>{balance_text}</b>",
+            f"🛒 Сегодня: <b>{today['sales']}</b> продаж",
+            f"📈 Оборот: <b>{html.escape(turnover)}</b>",
+            f"↩️ Возвраты: <b>{today['refunds']}</b>",
+        ]
+        if offline:
+            lines.extend(("", "⚠️ Аккаунт не запущен — изменения сохраняются. "
+                              "Запуск: 👤 Аккаунты → ▶️ Запустить."))
+        lines.extend(("", "Выберите раздел:"))
+        return "\n".join(lines)
 
     @staticmethod
     def _account_display_name(account_id: str) -> str:
         """Human-readable account label; internal IDs remain unchanged."""
         return "Основной аккаунт" if str(account_id) == "primary" else str(account_id)
 
+    def _selected_account_offline(self) -> bool:
+        """True, если панель нацелена на остановленный аккаунт (режим настройки)."""
+        runtime = getattr(self, "runtime", None)
+        if runtime is None or not hasattr(runtime, "is_offline"):
+            return False
+        account_id = str(getattr(self.cardinal, "account_profile_id", "primary"))
+        try:
+            return bool(runtime.is_offline(account_id))
+        except Exception:
+            return False
+
     def send_profile(self, m: Message):
         """
         Отправляет статистику аккаунта.
         """
+        if self._selected_account_offline():
+            self.bot.send_message(
+                m.chat.id,
+                "⚠️ Аккаунт не запущен — профиль FunPay появится после запуска.\n"
+                "Запустите его в разделе 👤 Аккаунты.",
+                reply_markup=K().add(B("⬅️ Назад", callback_data="plata_menu:back")),
+            )
+            return
         self.bot.send_message(m.chat.id, utils.generate_profile_text(self.cardinal),
                               reply_markup=K().row(B("🔄 Обновить", callback_data=CBT.UPDATE_PROFILE),
                                                    B("⬅️ Назад", callback_data="plata_menu:back")))
@@ -513,6 +620,8 @@ class TGBot:
                 state = "работает"
             elif runtime and profile.account_id in runtime.errors:
                 state = "ошибка запуска"
+            elif runtime and profile.account_id == active_id and runtime.is_offline(profile.account_id):
+                state = "настройка (не запущен)"
             else:
                 state = "ожидает запуска"
             username = getattr(getattr(instance, "account", None), "username", None)
@@ -545,11 +654,14 @@ class TGBot:
                 )
                 keyboard.add(B("🔌 Прокси", callback_data=f"pap:{action}:open:{offset}"))
             elif profile.enabled:
-                keyboard.row(B("▶️ Запустить", callback_data=f"pa:{action}:enable:{offset}"),
+                keyboard.row(B("⚙️ Настроить", callback_data=f"pa:{action}:configure:{offset}"),
+                             B("▶️ Запустить", callback_data=f"pa:{action}:enable:{offset}"))
+                keyboard.row(B("🔑 Golden key", callback_data=f"pa:{action}:key:{offset}"),
                              B("🔌 Прокси", callback_data=f"pap:{action}:open:{offset}"))
             else:
                 keyboard.row(B("▶️ Включить", callback_data=f"pa:{action}:enable:{offset}"),
-                             B("🔌 Прокси", callback_data=f"pap:{action}:open:{offset}"))
+                             B("🔑 Golden key", callback_data=f"pa:{action}:key:{offset}"))
+                keyboard.add(B("🔌 Прокси", callback_data=f"pap:{action}:open:{offset}"))
         navigation = []
         if offset > 0:
             navigation.append(B("◀️", callback_data=f"pp:{max(0, offset - page_size)}"))
@@ -560,7 +672,8 @@ class TGBot:
         keyboard.row(B("📊 Общая статистика", callback_data="plata_menu:stats_all"),
                      B("🩺 Проверка аккаунтов", callback_data="plata_menu:health"))
         keyboard.add(B("⬅️ В главное меню", callback_data=CBT.MAIN))
-        lines.extend(("", "● — активный аккаунт панели"))
+        lines.extend(("", "● — активный аккаунт панели",
+                      "⚙️ Настроить — управление остановленным аккаунтом (например, если golden key перестал действовать)."))
         return "\n".join(lines), keyboard
 
     def refresh_account_center(self, call: CallbackQuery, offset: int = 0):
@@ -669,6 +782,56 @@ class TGBot:
         self.bot.send_message(message.chat.id,
                               f"✅ Аккаунт <b>{html.escape(profile.name)}</b> добавлен и запущен.{proxy_note}")
 
+    def account_update_key_text(self, message: Message):
+        """Сохраняет новый golden key профиля; работает и для остановленного аккаунта."""
+        state = self.get_state(message.chat.id, message.from_user.id)
+        if not state:
+            return
+        data = state["data"]
+        account_id = str(data.get("account_id") or "")
+        try:
+            self.bot.delete_message(message.chat.id, message.id)
+        except Exception:
+            pass
+        value = (message.text or "").strip()
+        if len(value) != 32 or value != value.lower() or not value.isalnum():
+            self.bot.send_message(message.chat.id,
+                                  "Некорректный golden key. Нужна строка из 32 строчных символов (латиница и цифры).")
+            return
+        runtime = getattr(self, "runtime", None)
+        registry = getattr(self.cardinal, "account_registry", None)
+        profile = registry.get(account_id) if registry is not None else None
+        if runtime is None or profile is None:
+            self.clear_state(message.chat.id, message.from_user.id)
+            self.bot.send_message(message.chat.id, "Аккаунт не найден.")
+            return
+        try:
+            profile = runtime.update_golden_key(account_id, value)
+        except ValueError:
+            self.bot.send_message(message.chat.id, "Некорректный golden key.")
+            return
+        self.clear_state(message.chat.id, message.from_user.id)
+        if not profile.enabled:
+            self.bot.send_message(message.chat.id, "🔑 Golden key обновлён. Аккаунт отключён — включите его "
+                                                   "кнопкой ▶️ Включить в 👤 Аккаунты.")
+            return
+        try:
+            runtime.start_profile(profile)
+            runtime.select(account_id)
+        except Exception as error:
+            try:
+                runtime.select(account_id)
+            except Exception:
+                logger.debug("TRACEBACK", exc_info=True)
+            self.bot.send_message(message.chat.id,
+                                  "🔑 Golden key сохранён, но запуск не удался:\n"
+                                  f"<code>{html.escape(str(error)[:200])}</code>\n\n"
+                                  "Откройте ⚙️ Настроить в 👤 Аккаунты, чтобы проверить настройки.")
+            return
+        self.bot.send_message(message.chat.id,
+                              f"✅ Golden key обновлён, аккаунт <b>{html.escape(profile.name)}</b> запущен.")
+        self.bot.send_message(message.chat.id, self._main_menu_text(), reply_markup=skb.SETTINGS_SECTIONS())
+
     def account_center_action(self, call: CallbackQuery):
         parts = call.data.split(":")
         if len(parts) != 4:
@@ -683,6 +846,27 @@ class TGBot:
         try:
             if action == "select":
                 runtime.select(account_id)
+            elif action == "configure":
+                runtime.select(account_id)
+                self.bot.answer_callback_query(call.id, "Аккаунт выбран для настройки")
+                if runtime.is_offline(account_id):
+                    self.bot.send_message(
+                        call.message.chat.id,
+                        "⚠️ Аккаунт не запущен: изменения сохраняются в его конфиги, "
+                        "а запуск — кнопкой ▶️ Запустить в 👤 Аккаунты.",
+                    )
+                self.bot.send_message(call.message.chat.id, self._main_menu_text(),
+                                      reply_markup=skb.SETTINGS_SECTIONS())
+                self.refresh_account_center(call, offset)
+                return
+            elif action == "key":
+                profile = runtime.registry.get(account_id) if runtime is not None else None
+                if profile is None:
+                    self.bot.answer_callback_query(call.id, "Аккаунт не найден.", show_alert=True)
+                    return
+                self.bot.answer_callback_query(call.id)
+                self._ask_golden_key(call.message.chat.id, call.from_user.id, account_id, offset)
+                return
             elif action == "stats":
                 runtime.select(account_id)
                 self.bot.answer_callback_query(call.id)
@@ -704,21 +888,6 @@ class TGBot:
             return
         self.bot.answer_callback_query(call.id, "Готово")
         self.refresh_account_center(call, offset)
-
-    def switch_account_callback(self, call: CallbackQuery):
-        runtime = getattr(self, "runtime", None)
-        account_id = call.data.split(":", 1)[1] if ":" in call.data else ""
-        try:
-            instance = runtime.select(account_id)
-        except (AttributeError, KeyError):
-            self.bot.answer_callback_query(call.id, "Аккаунт не найден.", show_alert=True)
-            return
-        self.bot.answer_callback_query(call.id, f"Выбран @{instance.account.username or account_id}")
-        self.bot.edit_message_text(
-            f"Активный аккаунт PLATA: <b>{html.escape(instance.account.username or account_id)}</b>",
-            call.message.chat.id,
-            call.message.id,
-        )
 
     def plata_menu_callback(self, call: CallbackQuery):
         section = call.data.split(":", 1)[1]
@@ -862,10 +1031,16 @@ class TGBot:
             item = data["replies"][str(star)]
             keyboard.row(B(f"{'🟢' if item.get('enabled') else '🔴'} {'⭐' * star}", callback_data=f"plata_module:review:star:{star}"),
                          B("✏️ Текст", callback_data=f"plata_module:review:edit:{star}"))
-        keyboard.row(B("🗑 Удалённый отзыв", callback_data="plata_module:review:star:6"),
-                     B("⬅️ Назад", callback_data="plata_module:home:open"))
-        self.bot.edit_message_text("<b>⭐ Ответы на отзывы</b>\n\nВыберите оценку для включения или изменения текста.",
-                                   call.message.chat.id, call.message.id, reply_markup=keyboard)
+        deleted = data["replies"]["6"]
+        keyboard.row(B(f"{'🟢' if deleted.get('enabled') else '🔴'} 🗑 Удалённый отзыв", callback_data="plata_module:review:star:6"),
+                     B("✏️ Текст", callback_data="plata_module:review:edit:6"))
+        keyboard.row(B("⬅️ Назад", callback_data="plata_module:home:open"))
+        text = "<b>⭐ Ответы на отзывы</b>\n\nВыберите оценку для включения или изменения текста."
+        without_text = [key for key, item in data["replies"].items() if item.get("enabled") and not item.get("text")]
+        if without_text:
+            labels = ", ".join("удалённый отзыв" if key == "6" else "⭐" * int(key) for key in sorted(without_text, key=int))
+            text += f"\n\n⚠️ Ответ включён без текста: {labels}. Нажмите «✏️ Текст»."
+        self.bot.edit_message_text(text, call.message.chat.id, call.message.id, reply_markup=keyboard)
 
     def review_module_edit(self, call: CallbackQuery, star: str):
         result = self.bot.send_message(call.message.chat.id, f"Введите текст ответа для {'удалённого отзыва' if star == '6' else '⭐' * int(star)}.",
@@ -880,7 +1055,7 @@ class TGBot:
         data = review_reply._settings(str(getattr(self.cardinal, "account_profile_id", "primary")))
         data["replies"][star] = {"enabled": True, "text": "" if message.text == "-" else message.text}
         review_reply._save(str(getattr(self.cardinal, "account_profile_id", "primary")), data)
-        self.bot.send_message(message.chat.id, "✅ Текст ответа сохранён.")
+        self.bot.send_message(message.chat.id, "✅ Текст ответа сохранён и включён.")
 
     def module_callback(self, call: CallbackQuery):
         from plata_modules import confirm_reminder, review_reply
@@ -895,6 +1070,10 @@ class TGBot:
             self.bot.answer_callback_query(call.id)
             return
         if parts[1] == "old_orders" and parts[2] == "run":
+            if self._selected_account_offline():
+                self.bot.answer_callback_query(call.id, "Аккаунт не запущен — данные FunPay недоступны.",
+                                               show_alert=True)
+                return
             from plata_modules.old_orders import send_orders
             send_orders(self.cardinal, call.message)
             self.bot.answer_callback_query(call.id)
@@ -920,6 +1099,10 @@ class TGBot:
             self.bot.answer_callback_query(call.id)
             return
         if parts[1] == "profile" and parts[2] == "run":
+            if self._selected_account_offline():
+                self.bot.answer_callback_query(call.id, "Аккаунт не запущен — статистика профиля недоступна.",
+                                               show_alert=True)
+                return
             from plata_modules.profile_stats import send_stats
             send_stats(self.cardinal, call.message)
             self.bot.answer_callback_query(call.id)
@@ -966,7 +1149,7 @@ class TGBot:
     def review_reply(self, m: Message):
         from plata_modules import review_reply
         parts = (m.text or "").split(maxsplit=2)
-        if len(parts) != 3 or parts[1] not in {"1", "2", "3", "4", "5", "deleted"}:
+        if len(parts) != 3 or parts[1] not in {"1", "2", "3", "4", "5", "6", "deleted"}:
             self.bot.send_message(m.chat.id, "Использование: <code>/review_reply 5 Спасибо за отзыв!</code>\n"
                                              "Для удалённого отзыва используйте <code>deleted</code>.")
             return
@@ -978,140 +1161,12 @@ class TGBot:
         review_reply._save(account_id, data)
         self.bot.send_message(m.chat.id, "Ответ на отзыв сохранён и включён.")
 
-    def use_account(self, m: Message):
-        """Switches Telegram control context to another running account."""
-        runtime = getattr(self, "runtime", None)
-        if runtime is None:
-            self.bot.send_message(m.chat.id, "Мультиаккаунтный runtime не инициализирован.")
-            return
-        parts = (m.text or "").split(maxsplit=1)
-        if len(parts) != 2 or not parts[1].strip():
-            self.bot.send_message(m.chat.id, "Использование: <code>/use_account ID</code>")
-            return
-        account_id = parts[1].strip()
-        try:
-            instance = runtime.select(account_id)
-        except KeyError:
-            self.bot.send_message(m.chat.id, "Аккаунт не найден или не запущен. Используй /accounts.")
-            return
-        username = html.escape(instance.account.username or account_id)
-        self.bot.send_message(m.chat.id, f"Активный аккаунт PLATA: <b>@{username}</b>")
 
     @staticmethod
     def _command_argument(m: Message) -> str | None:
         parts = (m.text or "").split(maxsplit=1)
         return parts[1].strip() if len(parts) == 2 and parts[1].strip() else None
 
-    def disable_account(self, m: Message):
-        account_id = self._command_argument(m)
-        if not account_id:
-            self.bot.send_message(m.chat.id, "Использование: <code>/disable_account ID</code>")
-            return
-        runtime = getattr(self, "runtime", None)
-        try:
-            runtime.disable(account_id)
-        except (AttributeError, KeyError):
-            self.bot.send_message(m.chat.id, "Аккаунт не найден.")
-            return
-        self.bot.send_message(m.chat.id, f"Аккаунт <code>{html.escape(account_id)}</code> отключён.")
-
-    def enable_account(self, m: Message):
-        account_id = self._command_argument(m)
-        if not account_id:
-            self.bot.send_message(m.chat.id, "Использование: <code>/enable_account ID</code>")
-            return
-        runtime = getattr(self, "runtime", None)
-        try:
-            runtime.enable(account_id)
-        except (AttributeError, KeyError):
-            self.bot.send_message(m.chat.id, "Аккаунт не найден.")
-            return
-        try:
-            profile = runtime.registry.get(account_id)
-            if profile:
-                runtime.start_profile(profile)
-        except Exception as error:
-            self.bot.send_message(m.chat.id, f"Профиль включён, но не запущен: <code>{html.escape(str(error)[:200])}</code>")
-            return
-        self.bot.send_message(
-            m.chat.id,
-            f"Аккаунт <code>{html.escape(account_id)}</code> включён и запущен.",
-        )
-
-    def remove_account(self, m: Message):
-        account_id = self._command_argument(m)
-        if not account_id:
-            self.bot.send_message(m.chat.id, "Использование: <code>/remove_account ID</code>")
-            return
-        registry = getattr(self.cardinal, "account_registry", None)
-        if registry is None or registry.get(account_id) is None:
-            self.bot.send_message(m.chat.id, "Аккаунт не найден.")
-            return
-        runtime = getattr(self, "runtime", None)
-        if runtime is not None and runtime.get(account_id) is not None:
-            runtime.disable(account_id)
-        registry.remove(account_id)
-        self.bot.send_message(
-            m.chat.id,
-            f"Аккаунт <code>{html.escape(account_id)}</code> удалён из PLATA. "
-            "Его конфигурационный файл сохранён.",
-        )
-
-    def update_account_key(self, m: Message):
-        text = m.text or ""
-        try:
-            self.bot.delete_message(m.chat.id, m.id)
-        except Exception:
-            pass
-        parts = text.split(maxsplit=2)
-        if len(parts) != 3:
-            self.bot.send_message(m.chat.id, "Использование: <code>/update_account_key ID GOLDEN_KEY</code>")
-            return
-        account_id, golden_key = parts[1].strip(), parts[2].strip()
-        runtime = getattr(self, "runtime", None)
-        registry = getattr(self.cardinal, "account_registry", None)
-        try:
-            profile = registry.update_golden_key(account_id, golden_key)
-        except AttributeError:
-            self.bot.send_message(m.chat.id, "Реестр аккаунтов не инициализирован.")
-            return
-        except KeyError:
-            self.bot.send_message(m.chat.id, "Аккаунт не найден.")
-            return
-        except ValueError:
-            self.bot.send_message(m.chat.id, "Некорректный golden_key.")
-            return
-        try:
-            if runtime is not None and profile.enabled:
-                runtime.restart_profile(account_id)
-        except Exception as error:
-            self.bot.send_message(m.chat.id, f"Токен сохранён, но аккаунт не запущен: <code>{html.escape(str(error)[:200])}</code>")
-            return
-        self.bot.send_message(m.chat.id, f"Токен аккаунта <code>{html.escape(account_id)}</code> обновлён.")
-
-    def rename_account(self, m: Message):
-        parts = (m.text or "").split(maxsplit=2)
-        if len(parts) != 3:
-            self.bot.send_message(m.chat.id, "Использование: <code>/rename_account ID Новое название</code>")
-            return
-        account_id, name = parts[1].strip(), parts[2].strip()
-        registry = getattr(self.cardinal, "account_registry", None)
-        try:
-            profile = registry.rename(account_id, name)
-        except AttributeError:
-            self.bot.send_message(m.chat.id, "Реестр аккаунтов не инициализирован.")
-            return
-        except KeyError:
-            self.bot.send_message(m.chat.id, "Аккаунт не найден.")
-            return
-        except ValueError:
-            self.bot.send_message(m.chat.id, "Название должно содержать от 1 до 64 символов.")
-            return
-        runtime = getattr(self, "runtime", None)
-        instance = runtime.get(account_id) if runtime else None
-        if instance is not None and hasattr(instance.telegram, "_profile"):
-            instance.telegram._profile = profile
-        self.bot.send_message(m.chat.id, f"Аккаунт переименован: <b>{html.escape(profile.name)}</b>.")
 
     def account_health(self, m: Message):
         runtime = getattr(self, "runtime", None)
@@ -1144,10 +1199,80 @@ class TGBot:
 
     def act_change_cookie(self, m: Message):
         """
-        Активирует режим ввода golden_key.
+        Активирует режим ввода golden_key. При нескольких аккаунтах сначала предлагает выбрать аккаунт.
         """
-        result = self.bot.send_message(m.chat.id, _("act_change_golden_key"), reply_markup=skb.CLEAR_STATE_BTN())
-        self.set_state(m.chat.id, result.id, m.from_user.id, CBT.CHANGE_GOLDEN_KEY)
+        profiles = self._account_profiles()
+        if len(profiles) > 1:
+            runtime = getattr(self, "runtime", None)
+            keyboard = K()
+            for profile in profiles:
+                marker = "🟢" if runtime is not None and runtime.get(profile.account_id) is not None else "⚪"
+                keyboard.add(B(f"{marker} {profile.name} · {profile.account_id}",
+                               callback_data=f"gk:{profile.account_id}"))
+            keyboard.add(B("⬅️ Отмена", callback_data=CBT.MAIN))
+            self.bot.send_message(m.chat.id,
+                                  "🔑 Для какого аккаунта меняем golden key?\n"
+                                  "🟢 — запущен, ⚪ — остановлен.",
+                                  reply_markup=keyboard)
+            return
+        account_id = (profiles[0].account_id if profiles
+                      else str(getattr(self.cardinal, "account_profile_id", "primary")))
+        self._ask_golden_key(m.chat.id, m.from_user.id, account_id)
+
+    def _account_profiles(self) -> list:
+        """Профили аккаунтов из реестра (пустой список, если реестр недоступен)."""
+        registry = getattr(self.cardinal, "account_registry", None)
+        if registry is None:
+            return []
+        try:
+            return registry.list()
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+            return []
+
+    def _ask_golden_key(self, chat_id: int, user_id: int, account_id: str, offset: int = 0) -> None:
+        """
+        Просит golden key выбранного аккаунта.
+
+        Для запущенного аккаунта используется проверка через FunPay, для остановленного —
+        сохранение в конфиг без сети с последующей попыткой запуска.
+        """
+        runtime = getattr(self, "runtime", None)
+        instance = runtime.get(account_id) if runtime is not None else None
+        if runtime is None or instance is not None:
+            if runtime is not None:
+                try:
+                    runtime.select(account_id)
+                except Exception:
+                    logger.debug("TRACEBACK", exc_info=True)
+            result = self.bot.send_message(chat_id, _("act_change_golden_key"), reply_markup=skb.CLEAR_STATE_BTN())
+            self.set_state(chat_id, result.id, user_id, CBT.CHANGE_GOLDEN_KEY)
+            return
+        profile = runtime.registry.get(account_id)
+        name = profile.name if profile is not None else account_id
+        result = self.bot.send_message(
+            chat_id,
+            f"🔑 Введите новый golden key для аккаунта <b>{html.escape(name)}</b> "
+            f"<i>{html.escape(account_id)}</i>.\n"
+            "Это 32 строчных символа (латиница и цифры). После сохранения аккаунт попробует запуститься.",
+            reply_markup=skb.CLEAR_STATE_BTN(),
+        )
+        self.set_state(chat_id, result.id, user_id, "plata_update_key",
+                       {"account_id": account_id, "offset": offset})
+
+    def golden_key_select(self, call: CallbackQuery):
+        """Выбор аккаунта для смены golden key из команды /golden_key."""
+        account_id = call.data.split(":", 1)[1] if ":" in call.data else ""
+        registry = getattr(self.cardinal, "account_registry", None)
+        if (registry.get(account_id) if registry is not None else None) is None:
+            self.bot.answer_callback_query(call.id, "Аккаунт не найден.", show_alert=True)
+            return
+        self.bot.answer_callback_query(call.id)
+        try:
+            self.bot.delete_message(call.message.chat.id, call.message.id)
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+        self._ask_golden_key(call.message.chat.id, call.from_user.id, account_id)
 
     def change_cookie(self, m: Message):
         """
@@ -1192,6 +1317,10 @@ class TGBot:
                               disable_web_page_preview=True)
 
     def update_profile(self, c: CallbackQuery):
+        if self._selected_account_offline():
+            self.bot.answer_callback_query(c.id, "Аккаунт не запущен — обновление профиля недоступно.",
+                                           show_alert=True)
+            return
         new_msg = self.bot.send_message(c.message.chat.id, _("updating_profile"))
         try:
             self.cardinal.account.get()
@@ -1888,21 +2017,35 @@ class TGBot:
                 "<code>/plugin_recover UUID</code> — восстановить последнюю копию.\n"
                 "<code>/plugin_access UUID all</code> — включить плагин для всех аккаунтов.\n"
                 "<code>/plugin_access UUID ID1 ID2</code> — включить только для выбранных аккаунтов.\n\n"
+                "📦 В карточке плагина — кнопка установки недостающих библиотек.\n\n"
                 "UUID указан в карточке плагина в разделе «Плагины».")
         self.bot.send_message(m.chat.id, text,
                               reply_markup=K().add(B("⬅️ Назад", callback_data="plata_menu:back")))
 
     def plugins_audit(self, m: Message):
         results = plata_plugins.audit_all()
+        runtime_missing = plata_plugins.load_missing()
+        loaded_plugins = {os.path.basename(item.path): uuid for uuid, item in self.cardinal.plugins.items()}
         good = sum(item["ok"] for item in results)
         bad = len(results) - good
         lines = [f"<b>Аудит плагинов PLATA</b>\n✅ корректных: {good}\n⚠️ проблемных: {bad}"]
+        keyboard = K()
+        buttons = 0
         for item in results:
-            if not item["ok"]:
-                detail = ", ".join(item["missing"] + item.get("missing_dependencies", [])) or item["error"] or "ошибка"
-                lines.append(f"• <code>{html.escape(item['file'])}</code>: {html.escape(detail)}")
-        self.bot.send_message(m.chat.id, "\n".join(lines),
-                              reply_markup=K().add(B("⬅️ Назад", callback_data="plata_menu:back")))
+            uuid = loaded_plugins.get(item["file"])
+            key = uuid or f"file:{item['file']}"
+            missing = sorted(set(item.get("missing_dependencies", [])) |
+                             set((runtime_missing.get(key) or {}).get("modules") or []))
+            if item["ok"] and not missing:
+                continue
+            detail = ", ".join(item["missing"] + missing) or item["error"] or "ошибка"
+            lines.append(f"• <code>{html.escape(item['file'])}</code>: {html.escape(detail)}")
+            if missing and buttons < 8:
+                keyboard.add(B(_("pl_install_deps") + f" · {item['file']}", None,
+                               f"{CBT.INSTALL_PLUGIN_DEPS}:{key}"))
+                buttons += 1
+        keyboard.add(B("⬅️ Назад", callback_data="plata_menu:back"))
+        self.bot.send_message(m.chat.id, "\n".join(lines), reply_markup=keyboard)
 
     def send_review_reply_text(self, c: CallbackQuery):
         stars = int(c.data.split(":")[1])
@@ -1958,11 +2101,13 @@ class TGBot:
         self.msg_handler(self.send_all_sales_stats, commands=["stats_all"])
         self.msg_handler(self.send_accounts, commands=["accounts"])
         # Account operations are available only through the account center UI.
-        self.msg_handler(self.act_change_cookie, commands=["change_cookie", "golden_key"])
+        self.msg_handler(self.act_change_cookie, commands=["golden_key"])
         self.msg_handler(self.change_cookie, func=lambda m: self.check_state(m.chat.id, m.from_user.id,
                                                                              CBT.CHANGE_GOLDEN_KEY))
         self.msg_handler(self.add_account_flow_text,
                          func=lambda m: self.check_state(m.chat.id, m.from_user.id, "plata_add_account"))
+        self.msg_handler(self.account_update_key_text,
+                         func=lambda m: self.check_state(m.chat.id, m.from_user.id, "plata_update_key"))
         self.cbq_handler(self.update_profile, lambda c: c.data == CBT.UPDATE_PROFILE)
         self.msg_handler(self.act_manual_delivery_test, commands=["test_lot"])
         self.msg_handler(self.act_upload_image, commands=["upload_chat_img", "upload_offer_img"])
@@ -2003,6 +2148,8 @@ class TGBot:
         self.msg_handler(self.analytics, commands=["analytics"])
         self.msg_handler(self.plugin_help, commands=["plugin_help"])
         self.msg_handler(self.review_module_edit_text, func=lambda m: self.check_state(m.chat.id, m.from_user.id, "plata_review_edit"))
+        self.msg_handler(self.review_reply, commands=["review_reply"])
+        self.msg_handler(self.reminder_text, commands=["reminder_text"])
         self.msg_handler(self.plugins_audit, commands=["plugins_audit"])
         self.cbq_handler(self.send_review_reply_text, lambda c: c.data.startswith(f"{CBT.SEND_REVIEW_REPLY_TEXT}:"))
 
@@ -2026,9 +2173,9 @@ class TGBot:
         self.cbq_handler(self.send_old_mode_help_text, lambda c: c.data == CBT.OLD_MOD_HELP)
         self.cbq_handler(self.empty_callback, lambda c: c.data == CBT.EMPTY)
         self.cbq_handler(self.switch_lang, lambda c: c.data.startswith(f"{CBT.LANG}:"))
-        self.cbq_handler(self.switch_account_callback, lambda c: c.data.startswith("plata_account:"))
         self.cbq_handler(self.add_account_flow_callback, lambda c: c.data == "pa:add")
         self.cbq_handler(self.account_center_action, lambda c: c.data.startswith("pa:"))
+        self.cbq_handler(self.golden_key_select, lambda c: c.data.startswith("gk:"))
         self.cbq_handler(self.account_center_page, lambda c: c.data.startswith("pp:"))
         self.cbq_handler(self.plata_menu_callback, lambda c: c.data.startswith("plata_menu:"))
         self.cbq_handler(self.module_callback, lambda c: c.data.startswith("plata_module:"))
@@ -2143,6 +2290,7 @@ class TGBot:
         Запускает поллинг.
         """
         self.send_notification(_("bot_started"), notification_type=utils.NotificationTypes.bot_start)
+        self.notify_pending_missing_dependencies()
         k_err = 0
         while True:
             try:

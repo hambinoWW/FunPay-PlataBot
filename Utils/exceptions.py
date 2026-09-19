@@ -160,3 +160,13 @@ class FieldNotExistsError(Exception):
 
     def __str__(self):
         return _("exc_plugin_field_not_found", self.plugin_file_name, self.field_name)
+
+
+class BalanceGettingError(Exception):
+    """
+    Исключение, которое райзится, если не удалось получить баланс аккаунта
+    (например, у аккаунта нет опубликованных лотов).
+    """
+
+    def __str__(self):
+        return _("exc_balance_get_err")

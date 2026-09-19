@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from cardinal import Cardinal
-from telebot.types import CallbackQuery, Message
+from telebot.types import CallbackQuery
 import logging
 
 from locales.localizer import Localizer

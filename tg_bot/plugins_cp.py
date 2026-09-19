@@ -18,6 +18,8 @@ from locales.localizer import Localizer
 from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B, Message, CallbackQuery
 import datetime
 import logging
+from threading import Thread
+
 import plata_plugins
 
 logger = logging.getLogger("TGBot")
@@ -69,7 +71,8 @@ def init_plugins_cp(cardinal: Cardinal, *args):
 
         plugin_data = cardinal.plugins[uuid]
         audit = plata_plugins.audit_plugin(plugin_data.path)
-        dependencies = ", ".join(audit["missing_dependencies"]) or "все доступны"
+        missing_deps = plata_plugins.collect_missing(uuid, plugin_data.path)
+        dependencies = ", ".join(missing_deps) or "все доступны"
         backups = len(plata_plugins.list_backups(plugin_data.path))
         scope = plata_plugins.load_scopes().get(uuid, [])
         scope_text = ", ".join(scope) if scope else "все аккаунты"
@@ -81,13 +84,13 @@ def init_plugins_cp(cardinal: Cardinal, *args):
 
 <b><i>{_('pl_author')}: </i></b>{utils.escape(plugin_data.credits)}
 
-<b>Проверка:</b> {'✅ пройдена' if audit['ok'] else '⚠️ есть проблемы'}
+<b>Проверка:</b> {'✅ пройдена' if audit['ok'] and not missing_deps else '⚠️ есть проблемы'}
 <b>Зависимости:</b> {utils.escape(dependencies)}
 <b>Резервные копии:</b> <code>{backups}</code>
 <b>Аккаунты:</b> {utils.escape(scope_text)}
 
 <i>{_('gl_last_update')}:</i>  <code>{datetime.datetime.now().strftime('%H:%M:%S')}</code>"""
-        keyboard = keyboards.edit_plugin(cardinal, uuid, offset)
+        keyboard = keyboards.edit_plugin(cardinal, uuid, offset, missing_deps=missing_deps)
 
         bot.edit_message_text(text, c.message.chat.id, c.message.id, reply_markup=keyboard)
         bot.answer_callback_query(c.id)
@@ -136,8 +139,10 @@ def init_plugins_cp(cardinal: Cardinal, *args):
             bot.answer_callback_query(c.id)
             return
 
+        missing_deps = plata_plugins.collect_missing(uuid, cardinal.plugins[uuid].path)
         bot.edit_message_reply_markup(c.message.chat.id, c.message.id,
-                                      reply_markup=keyboards.edit_plugin(cardinal, uuid, offset, True))
+                                      reply_markup=keyboards.edit_plugin(cardinal, uuid, offset, True,
+                                                                         missing_deps))
         bot.answer_callback_query(c.id)
 
     def cancel_delete_plugin(c: CallbackQuery):
@@ -148,8 +153,10 @@ def init_plugins_cp(cardinal: Cardinal, *args):
             bot.answer_callback_query(c.id)
             return
 
+        missing_deps = plata_plugins.collect_missing(uuid, cardinal.plugins[uuid].path)
         bot.edit_message_reply_markup(c.message.chat.id, c.message.id,
-                                      reply_markup=keyboards.edit_plugin(cardinal, uuid, offset))
+                                      reply_markup=keyboards.edit_plugin(cardinal, uuid, offset,
+                                                                         missing_deps=missing_deps))
         bot.answer_callback_query(c.id)
 
     def delete_plugin(c: CallbackQuery):
@@ -191,6 +198,58 @@ def init_plugins_cp(cardinal: Cardinal, *args):
         cardinal.pin_plugin(uuid)
         c.data = f"{CBT.EDIT_PLUGIN}:{uuid}:{offset}"
         open_edit_plugin_cp(c)
+
+    def install_plugin_deps(c: CallbackQuery):
+        """
+        Устанавливает недостающие Python-библиотеки плагина по нажатию кнопки.
+        """
+        key = c.data.split(":", 1)[1]
+        if key in cardinal.plugins:
+            plugin_data = cardinal.plugins[key]
+            path, name = plugin_data.path, plugin_data.name
+        else:
+            file_name = os.path.basename(key.split(":", 1)[-1])
+            path, name = os.path.join("plugins", file_name), file_name
+
+        if not os.path.exists(path):
+            bot.answer_callback_query(c.id, _("pl_file_not_found_err", utils.escape(path)), show_alert=True)
+            return
+
+        missing = plata_plugins.collect_missing(key, path)
+        if not missing:
+            bot.answer_callback_query(c.id, _("pl_deps_nothing"), show_alert=True)
+            return
+
+        packages = plata_plugins.packages_for(missing)
+        chat_id, message_id = c.message.chat.id, c.message.id
+        bot.answer_callback_query(c.id)
+        bot.edit_message_text(_("pl_deps_installing", utils.escape(", ".join(packages))), chat_id, message_id)
+
+        def worker():
+            result = plata_plugins.install_dependencies(missing)
+            if result["ok"]:
+                plata_plugins.clear_missing(key)
+                text = _("pl_deps_installed", utils.escape(", ".join(result["packages"])),
+                         _("pl_deps_restart"))
+                keyboard = K()
+                if key in cardinal.plugins:
+                    keyboard.add(B(_("gl_refresh"), None, f"{CBT.EDIT_PLUGIN}:{key}:0"))
+                keyboard.add(B(_("gl_back"), None, f"{CBT.PLUGINS_LIST}:0"))
+                logger.info(_("log_pl_deps_installed", getattr(c.from_user, "username", None), c.from_user.id, name,
+                              ", ".join(result["packages"])))
+            else:
+                tail = "\n".join(result["output"].strip().splitlines()[-6:]) or _("pl_deps_no_output")
+                text = _("pl_deps_install_err", utils.escape(", ".join(packages)), utils.escape(tail))
+                keyboard = K().add(B(_("pl_install_deps"), None, f"{CBT.INSTALL_PLUGIN_DEPS}:{key}")) \
+                               .add(B(_("gl_back"), None, f"{CBT.PLUGINS_LIST}:0"))
+                logger.warning(_("log_pl_deps_install_err", name, ", ".join(result["packages"])))
+            try:
+                bot.edit_message_text(text, chat_id, message_id, reply_markup=keyboard)
+            except Exception:
+                logger.debug("TRACEBACK", exc_info=True)
+
+        Thread(target=worker, daemon=True).start()
+
 
     def act_upload_plugin(obj: CallbackQuery | Message):
         if isinstance(obj, CallbackQuery):
@@ -249,6 +308,7 @@ def init_plugins_cp(cardinal: Cardinal, *args):
     tg.cbq_handler(cancel_delete_plugin, lambda c: c.data.startswith(f"{CBT.CANCEL_DELETE_PLUGIN}:"))
     tg.cbq_handler(delete_plugin, lambda c: c.data.startswith(f"{CBT.CONFIRM_DELETE_PLUGIN}:"))
     tg.cbq_handler(pin_plugin, lambda c: c.data.startswith(f"{CBT.PIN_PLUGIN}:"))
+    tg.cbq_handler(install_plugin_deps, lambda c: c.data.startswith(f"{CBT.INSTALL_PLUGIN_DEPS}:"))
 
     tg.cbq_handler(act_upload_plugin, lambda c: c.data.startswith(f"{CBT.UPLOAD_PLUGIN}:"))
     tg.msg_handler(act_upload_plugin, commands=["upload_plugin"])

@@ -15,13 +15,13 @@ import Utils.exceptions
 from uuid import UUID
 import importlib.util
 import configparser
-import itertools
-import requests
 import datetime
+import html
 import logging
 import random
 import time
 import sys
+import traceback
 import os
 from pip._internal.cli.main import main
 import FunPayAPI
@@ -215,7 +215,11 @@ class Plata(object):
         while attempts_left is None or attempts_left > 0:
             try:
                 self.account.get()
-                self.balance = self.get_balance()
+                try:
+                    self.balance = self.get_balance()
+                except Utils.exceptions.BalanceGettingError:
+                    self.balance = FunPayAPI.types.Balance(0, 0, 0, 0, 0, 0)
+                    logger.warning(_("crd_balance_get_warn"))
                 greeting_text = plata_tools.create_greeting_text(self)
                 plata_tools.set_console_title(f"{PRODUCT_NAME} - {self.account.username} ({self.account.id})")
                 for line in greeting_text.split("\n"):
@@ -290,17 +294,27 @@ class Plata(object):
         self.telegram.init()
 
     def get_balance(self, attempts: int = 3) -> FunPayAPI.types.Balance:
-        subcategories = self.account.get_sorted_subcategories()[FunPayAPI.enums.SubCategoryTypes.COMMON]
-        lots = []
-        while not lots and attempts:
-            attempts -= 1
-            subcat_id = random.choice(list(subcategories.keys()))
-            lots = self.account.get_subcategory_public_lots(FunPayAPI.enums.SubCategoryTypes.COMMON, subcat_id)
-            break
-        else:
-            raise Exception(...)
-        balance = self.account.get_balance(random.choice(lots).id)
-        return balance
+        """
+        Получает баланс аккаунта.
+
+        Запрос баланса выполняется со страницы любого опубликованного лота, поэтому
+        подкатегории аккаунта (COMMON и CURRENCY) перебираются в случайном порядке.
+
+        :param attempts: сколько подкатегорий (не более) проверить в поисках лота.
+
+        :return: информация о балансе аккаунта.
+
+        :raises Utils.exceptions.BalanceGettingError: если подходящий лот не найден.
+        """
+        candidates = [(subcategory_type, subcategory_id)
+                      for subcategory_type, subcategories in self.account.get_sorted_subcategories().items()
+                      for subcategory_id in subcategories]
+        random.shuffle(candidates)
+        for subcategory_type, subcategory_id in candidates[:max(attempts, 1)]:
+            lots = self.account.get_subcategory_public_lots(subcategory_type, subcategory_id)
+            if lots:
+                return self.account.get_balance(random.choice(lots).id)
+        raise Utils.exceptions.BalanceGettingError()
 
     # Прочее
     def raise_lots(self) -> int:
@@ -493,7 +507,7 @@ class Plata(object):
                     elif isinstance(entity, float):
                         time.sleep(entity)
                     break
-                except Exception as ex:
+                except Exception:
                     logger.warning(_("crd_msg_send_err", chat_id))
                     logger.debug("TRACEBACK", exc_info=True)
                     logger.info(_("crd_msg_attempts_left", current_attempts))
@@ -842,6 +856,9 @@ class Plata(object):
                     continue
                 plugin, data = self.load_plugin(file)
             except:
+                missing = plata_plugins.extract_missing_modules(traceback.format_exc())
+                if missing:
+                    plata_plugins.record_missing(f"file:{file}", missing, "load")
                 logger.error(_("crd_plugin_load_err", file))
                 logger.debug("TRACEBACK", exc_info=True)
                 continue
@@ -906,6 +923,7 @@ class Plata(object):
                                            plata_plugins.enabled_for_account(plugin_uuid, account_id)):
                     func(*args)
             except Exception as ex:
+                self.report_missing_dependency(func)
                 text = _("crd_handler_err")
                 try:
                     text += f" {ex.short_str()}"
@@ -913,6 +931,45 @@ class Plata(object):
                     pass
                 logger.error(text)
                 logger.debug("TRACEBACK", exc_info=True)
+
+    def report_missing_dependency(self, handler: Callable) -> bool:
+        """
+        Проверяет, вызвана ли ошибка хэндлера отсутствием Python-библиотеки,
+        и предлагает администраторам установить ее одной кнопкой.
+
+        :param handler: хэндлер, в котором произошла ошибка.
+
+        :return: True, если ошибка связана с отсутствующей библиотекой.
+        """
+        modules = plata_plugins.extract_missing_modules(traceback.format_exc())
+        if not modules:
+            return False
+        plugin_uuid = getattr(handler, "plugin_uuid", None)
+        if not plugin_uuid:
+            return False
+        if not plata_plugins.record_missing(plugin_uuid, modules, "runtime"):
+            return True
+        telegram = getattr(self, "telegram", None)
+        if telegram is None:
+            return True
+        try:
+            from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B
+            from tg_bot import CBT
+            from tg_bot.utils import NotificationTypes
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+            return True
+        plugin = self.plugins.get(plugin_uuid)
+        name = plugin.name if plugin is not None else plugin_uuid
+        packages = ", ".join(plata_plugins.packages_for(modules))
+        text = _("pl_missing_deps_notify", html.escape(name), html.escape(packages))
+        keyboard = K().add(B(_("pl_install_deps"), None, f"{CBT.INSTALL_PLUGIN_DEPS}:{plugin_uuid}"))
+        try:
+            telegram.send_notification(text, keyboard,
+                                       notification_type=NotificationTypes.important_announcement)
+        except Exception:
+            logger.debug("TRACEBACK", exc_info=True)
+        return True
 
     def add_telegram_commands(self, uuid: str, commands: list[tuple[str, str, bool]]):
         """

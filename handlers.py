@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     Cardinal = Plata
 
 from FunPayAPI.types import OrderShortcut, Order
-from FunPayAPI import exceptions, utils as fp_utils
+from FunPayAPI import exceptions
 from FunPayAPI.updater.events import *
 
 from tg_bot import utils, keyboards
@@ -23,7 +23,6 @@ from datetime import datetime
 import logging
 import plata_analytics
 import time
-import re
 
 LAST_STACK_ID = ""
 MSG_LOG_LAST_STACK_ID = ""
@@ -67,7 +66,7 @@ def save_init_chats_handler(c: Cardinal, e: InitialChatEvent):
     """
     if c.MAIN_CFG["Greetings"].getboolean("sendGreetings") and e.chat.id not in c.old_users:
         c.old_users[e.chat.id] = int(time.time())
-        cardinal_tools.cache_old_users(c.old_users)
+        plata_tools.cache_old_users(c.old_users)
 
 
 def update_threshold_on_initial_chat(c: Cardinal, e: InitialChatEvent):
@@ -159,7 +158,7 @@ def greetings_handler(c: Cardinal, e: NewMessageEvent | LastChatMessageChangedEv
         return
 
     logger.info(_("log_sending_greetings", chat_name, chat_id))
-    text = cardinal_tools.format_msg_text(c.MAIN_CFG["Greetings"]["greetingsText"], obj)
+    text = plata_tools.format_msg_text(c.MAIN_CFG["Greetings"]["greetingsText"], obj)
     Thread(target=c.send_message, args=(chat_id, text, chat_name), daemon=True).start()
 
 
@@ -181,7 +180,7 @@ def add_old_user_handler(c: Cardinal, e: NewMessageEvent | LastChatMessageChange
         return
 
     c.old_users[chat_id] = int(time.time())
-    cardinal_tools.cache_old_users(c.old_users)
+    plata_tools.cache_old_users(c.old_users)
 
 
 def send_response_handler(c: Cardinal, e: NewMessageEvent | LastChatMessageChangedEvent):
@@ -206,7 +205,7 @@ def send_response_handler(c: Cardinal, e: NewMessageEvent | LastChatMessageChang
         return
 
     logger.info(_("log_new_cmd", command, chat_name, chat_id))
-    response_text = cardinal_tools.format_msg_text(c.AR_CFG[command]["response"], obj)
+    response_text = plata_tools.format_msg_text(c.AR_CFG[command]["response"], obj)
     Thread(target=c.send_message, args=(chat_id, response_text, chat_name), daemon=True).start()
 
 
@@ -326,6 +325,36 @@ def send_review_notification(c: Cardinal, order: Order, chat_id: int, reply_text
            daemon=True).start()
 
 
+def _module_review_reply_text(c: Cardinal, order: Order, chat_id: int | None) -> str | None:
+    """
+    Возвращает текст ответа, который отправит встроенный модуль «Ответы на отзывы»,
+    или None, если за этот отзыв модуль отвечать не будет.
+
+    Нужно, чтобы старый механизм (секция ReviewReply в configs/_main.cfg) не дублировал
+    ответ, когда в аккаунте включен модуль ответов на отзывы.
+
+    :param c: объект кардинала.
+    :param order: заказ с отзывом.
+    :param chat_id: чат заказа (без него модуль ответить не сможет).
+
+    :return: текст ответа модуля или None.
+    """
+    if not chat_id:
+        return None
+    try:
+        from plata_modules import review_reply
+        settings = review_reply._settings(str(getattr(c, "account_profile_id", "primary")))
+        if not settings.get("enabled"):
+            return None
+        item = (settings.get("replies") or {}).get(str(getattr(order.review, "stars", 0))) or {}
+        text = item.get("text")
+        if item.get("enabled") and text:
+            return str(text)
+    except Exception:
+        logger.debug("TRACEBACK", exc_info=True)
+    return None
+
+
 def process_review_handler(c: Cardinal, e: NewMessageEvent | LastChatMessageChangedEvent):
     if not c.old_mode_enabled:
         if isinstance(e, LastChatMessageChangedEvent):
@@ -357,6 +386,11 @@ def process_review_handler(c: Cardinal, e: NewMessageEvent | LastChatMessageChan
 
         logger.info(f"Изменен отзыв на заказ #{order.id}.")  # locale
 
+        module_reply_text = _module_review_reply_text(c, order, chat_id)
+        if module_reply_text:
+            send_review_notification(c, order, chat_id, module_reply_text)
+            return
+
         toggle = f"star{order.review.stars}Reply"
         text = f"star{order.review.stars}ReplyText"
         reply_text = None
@@ -383,7 +417,7 @@ def process_review_handler(c: Cardinal, e: NewMessageEvent | LastChatMessageChan
                         text_ = text_[::-1].replace("\n", " ", text_.count("\n") - 9)[::-1]
                     return text_
 
-                reply_text = cardinal_tools.format_order_text(c.MAIN_CFG["ReviewReply"].get(text), order)
+                reply_text = plata_tools.format_order_text(c.MAIN_CFG["ReviewReply"].get(text), order)
                 reply_text = format_text4review(reply_text)
                 c.account.send_review(order.id, reply_text)
             except:
@@ -419,7 +453,7 @@ def send_command_notification_handler(c: Cardinal, e: NewMessageEvent | LastChat
     if not c.AR_CFG[command].get("notificationText"):
         text = f"🧑‍💻 Пользователь <b><i>{username}</i></b> ввел команду <code>{utils.escape(command)}</code>."  # locale
     else:
-        text = cardinal_tools.format_msg_text(c.AR_CFG[command]["notificationText"], obj)
+        text = plata_tools.format_msg_text(c.AR_CFG[command]["notificationText"], obj)
 
     Thread(target=c.telegram.send_notification, args=(text, keyboards.reply(chat_id, chat_name),
                                                       utils.NotificationTypes.command), daemon=True).start()
@@ -432,9 +466,9 @@ def test_auto_delivery_handler(c: Cardinal, e: NewMessageEvent | LastChatMessage
     if not c.old_mode_enabled:
         if isinstance(e, LastChatMessageChangedEvent):
             return
-        obj, message_text, chat_name, chat_id = e.message, str(e.message), e.message.chat_name, e.message.chat_id
+        message_text, chat_name, chat_id = str(e.message), e.message.chat_name, e.message.chat_id
     else:
-        obj, message_text, chat_name, chat_id = e.chat, str(e.chat), e.chat.name, e.chat.id
+        message_text, chat_name, chat_id = str(e.chat), e.chat.name, e.chat.id
 
     if not message_text.startswith("!автовыдача"):
         return
@@ -493,11 +527,11 @@ def get_lot_config_by_name(c: Cardinal, name: str) -> configparser.SectionProxy 
     return None
 
 
-def check_products_amount(config_obj: configparser.SectionProxy) -> int:
+def check_products_amount(cardinal: Cardinal, config_obj: configparser.SectionProxy) -> int:
     file_name = config_obj.get("productsFileName")
     if not file_name:
         return 1
-    return cardinal_tools.count_products(c.product_path(file_name))
+    return plata_tools.count_products(cardinal.product_path(file_name))
 
 
 # Новый ордер (REGISTER_TO_NEW_ORDER)
@@ -602,19 +636,19 @@ def deliver_goods(c: Cardinal, e: NewOrderEvent, *args):
     else:
         chat_id = e.order.chat_id
     cfg_obj = getattr(e, "config_section_obj")
-    delivery_text = cardinal_tools.format_order_text(cfg_obj["response"], e.order)
+    delivery_text = plata_tools.format_order_text(cfg_obj["response"], e.order)
 
     amount, goods_left, products = 1, -1, []
     try:
         if file_name := cfg_obj.get("productsFileName"):
             if c.multidelivery_enabled and not cfg_obj.getboolean("disableMultiDelivery"):
                 amount = e.order.amount if e.order.amount else 1
-            products, goods_left = cardinal_tools.get_products(c.product_path(file_name), amount)
+            products, goods_left = plata_tools.get_products(c.product_path(file_name), amount)
             delivery_text = delivery_text.replace("$product", "\n".join(products).replace("\\n", "\n"))
     except Exception as exc:
         logger.error(
             f"Произошла ошибка при получении товаров для заказа $YELLOW{e.order.id}: {str(exc)}$RESET")  # locale
-        logger.debug("TRACEBACK", exc)
+        logger.debug("TRACEBACK", exc_info=True)
         setattr(e, "error", 1)
         setattr(e, "error_text",
                 f"Произошла ошибка при получении товаров для заказа {e.order.id}: {str(exc)}")  # locale
@@ -626,7 +660,7 @@ def deliver_goods(c: Cardinal, e: NewOrderEvent, *args):
         setattr(e, "error", 1)
         setattr(e, "error_text", f"Не удалось отправить сообщение с товаром для заказа {e.order.id}.")  # locale
         if file_name and products:
-            cardinal_tools.add_products(c.product_path(file_name), products, at_zero_position=True)
+            plata_tools.add_products(c.product_path(file_name), products, at_zero_position=True)
     else:
         logger.info(f"Товар для заказа {e.order.id} выдан.")  # locale
         setattr(e, "delivered", True)
@@ -781,14 +815,14 @@ def update_lots_states(cardinal: Cardinal, event: NewOrderEvent):
                         current_task = 1
                     # если глобальная автодеактивация включена - восстанавливаем только если есть товары.
                     else:
-                        if check_products_amount(config_obj):
+                        if check_products_amount(cardinal, config_obj):
                             current_task = 1
 
         # Если же лот активен
         else:
             # и найден в конфиге автовыдачи
             if config_obj:
-                products_count = check_products_amount(config_obj)
+                products_count = check_products_amount(cardinal, config_obj)
                 # и все условия выполнены: нет товаров + включено глобальная автодеактивация + она не выключена в
                 # самом лоте в конфига автовыдачи - отключаем.
                 if all((not products_count, cardinal.MAIN_CFG["FunPay"].getboolean("autoDisable"),
@@ -843,7 +877,7 @@ def send_thank_u_message_handler(cardinal: Cardinal, event: OrderStatusChangedEv
     if not cardinal.MAIN_CFG["OrderConfirm"].getboolean("sendReply") or event.order.status is not types.OrderStatuses.CLOSED:
         return
 
-    text = cardinal_tools.format_order_text(cardinal.MAIN_CFG["OrderConfirm"]["replyText"], event.order)
+    text = plata_tools.format_order_text(cardinal.MAIN_CFG["OrderConfirm"]["replyText"], event.order)
     chat = cardinal.account.get_chat_by_name(event.order.buyer_username)
     if chat:
         chat_id = chat.id

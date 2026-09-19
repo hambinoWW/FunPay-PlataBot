@@ -7,7 +7,7 @@ import requests
 from locales.localizer import Localizer
 
 if TYPE_CHECKING:
-    from plata_core import Plata
+    from plata_core import Cardinal
 
 import FunPayAPI.types
 

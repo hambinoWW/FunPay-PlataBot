@@ -66,6 +66,7 @@ class PlataRuntime:
         self.raw_auto_response_config = raw_auto_response_config
         self.version = version
         self.instances: dict[str, Plata] = {}
+        self.offline: dict[str, Plata] = {}
         self.errors: dict[str, str] = {}
         self.threads: dict[str, threading.Thread] = {}
         self.telegram = None
@@ -237,14 +238,58 @@ class PlataRuntime:
                 self.health_checks.discard(account_id)
 
     def select(self, account_id: str) -> Plata:
+        """Делает аккаунт активным; остановленный профиль открывается для настройки без запуска."""
         with self.account_lock:
             instance = self.get(account_id)
             if instance is None:
-                raise KeyError(account_id)
+                profile = self.registry.get(account_id)
+                if profile is None or not profile.enabled:
+                    raise KeyError(account_id)
+                instance = self._get_or_create_offline(profile)
             self.registry.set_active(account_id)
             if self.telegram is not None:
                 self.telegram.cardinal = instance
             return instance
+
+    def is_offline(self, account_id: str) -> bool:
+        """True, если аккаунт выбран для настройки, но не запущен."""
+        return str(account_id) in self.offline
+
+    def _panel_instance(self) -> Plata | None:
+        active_id = self.registry.active_id()
+        if active_id is None:
+            return None
+        instance = self.instances.get(active_id)
+        if instance is None:
+            instance = self.offline.get(active_id)
+        return instance
+
+    def _get_or_create_offline(self, profile) -> Plata:
+        """Возвращает "холодный" экземпляр аккаунта: конфиги загружены, FunPay не подключён."""
+        instance = self.offline.get(profile.account_id)
+        if instance is None:
+            try:
+                instance = self._build_instance(profile)
+            except SystemExit:
+                raise RuntimeError("Прокси не прошёл проверку (Proxy → check). "
+                                   "Исправьте прокси или отключите проверку.")
+            self.offline[profile.account_id] = instance
+            logger.info("Аккаунт %s выбран для настройки без запуска", profile.account_id)
+        return instance
+
+    def update_golden_key(self, account_id: str, golden_key: str):
+        """Обновляет golden key аккаунта; работает и для остановленных профилей."""
+        profile = self.registry.update_golden_key(account_id, golden_key)
+        with self.account_lock:
+            instance = self.instances.get(account_id)
+            if instance is None:
+                instance = self.offline.get(account_id)
+            if instance is not None:
+                instance.MAIN_CFG.set("FunPay", "golden_key", golden_key)
+                account = getattr(instance, "account", None)
+                if account is not None:
+                    account.golden_key = golden_key
+        return profile
 
     def set_proxy(self, account_id: str, proxy: str | None) -> str | None:
         """
@@ -260,6 +305,8 @@ class PlataRuntime:
         normalized = plata_accounts.write_account_proxy(profile.config_path, proxy)
         with self.account_lock:
             instance = self.instances.get(account_id)
+            if instance is None:
+                instance = self.offline.get(account_id)
             if instance is not None:
                 apply_proxy_to_instance(instance, normalized)
         logger.info("Прокси аккаунта %s обновлён: %s", account_id, "включён" if normalized else "отключён")
@@ -282,12 +329,23 @@ class PlataRuntime:
             instance = self.instances.pop(account_id, None)
             if instance is not None:
                 instance.stop()
+            self.offline.pop(account_id, None)
             confirm_reminder.stop(account_id)
             self.registry.set_enabled(account_id, False)
             self.errors.pop(account_id, None)
-            active = self.active()
-            if self.telegram is not None and active is not None:
-                self.telegram.cardinal = active
+            if self.telegram is not None:
+                panel = getattr(self.telegram, "cardinal", None)
+                if panel is instance or getattr(panel, "account_profile_id", None) == account_id:
+                    fallback = self._panel_instance()
+                    if fallback is None:
+                        fallback_profile = self.registry.get(self.registry.active_id() or "")
+                        if fallback_profile is not None and fallback_profile.enabled:
+                            try:
+                                fallback = self._get_or_create_offline(fallback_profile)
+                            except (Exception, SystemExit):
+                                fallback = None
+                    if fallback is not None:
+                        self.telegram.cardinal = fallback
 
     def enable(self, account_id: str) -> None:
         with self.account_lock:
@@ -298,21 +356,24 @@ class PlataRuntime:
         with self.account_lock:
             return self._start_profile_locked(profile)
 
-    def _start_profile_locked(self, profile) -> Plata:
-        if profile.account_id in self.instances:
-            return self.instances[profile.account_id]
-        if self.telegram is None:
-            raise RuntimeError("Telegram-бот не инициализирован")
-
+    def _build_instance(self, profile) -> Plata:
+        """Собирает экземпляр PLATA с конфигами аккаунта, не подключаясь к FunPay."""
         config = copy.deepcopy(cfg_loader.load_main_config(profile.config_path))
         delivery_path = profile.auto_delivery_path or "configs/auto_delivery.cfg"
         response_path = profile.auto_response_path or "configs/auto_response.cfg"
         products_directory = ("storage/products" if profile.account_id == "primary"
                               else f"storage/accounts/{profile.account_id}/products")
         Path(products_directory).mkdir(parents=True, exist_ok=True)
-        delivery_config = cfg_loader.load_auto_delivery_config(delivery_path, products_directory)
-        response_config = cfg_loader.load_auto_response_config(response_path)
-        raw_response_config = cfg_loader.load_raw_auto_response_config(response_path)
+        if Path(delivery_path).exists():
+            delivery_config = cfg_loader.load_auto_delivery_config(delivery_path, products_directory)
+        else:
+            delivery_config = copy.deepcopy(self.auto_delivery_config)
+        if Path(response_path).exists():
+            response_config = cfg_loader.load_auto_response_config(response_path)
+            raw_response_config = cfg_loader.load_raw_auto_response_config(response_path)
+        else:
+            response_config = copy.deepcopy(self.auto_response_config)
+            raw_response_config = copy.deepcopy(self.raw_auto_response_config)
         config["Telegram"]["enabled"] = "0"
 
         instance = Plata(config, delivery_config, response_config, raw_response_config, self.version)
@@ -323,10 +384,28 @@ class PlataRuntime:
         instance.auto_delivery_config_path = delivery_path
         instance.auto_response_config_path = response_path
         instance.products_directory = products_directory
+        return instance
+
+    def _start_profile_locked(self, profile) -> Plata:
+        if profile.account_id in self.instances:
+            return self.instances[profile.account_id]
+        if self.telegram is None:
+            raise RuntimeError("Telegram-бот не инициализирован")
+
+        instance = self.offline.pop(profile.account_id, None)
+        if instance is None:
+            instance = self._build_instance(profile)
         try:
             instance.init(account_attempts=3)
         except Exception as error:
             self.errors[profile.account_id] = str(error)
+            # Профиль остаётся доступным для настройки, чтобы можно было исправить данные и запустить снова.
+            try:
+                self.offline[profile.account_id] = self._build_instance(profile)
+                if self.registry.active_id() == profile.account_id and self.telegram is not None:
+                    self.telegram.cardinal = self.offline[profile.account_id]
+            except (Exception, SystemExit):
+                logger.debug("TRACEBACK", exc_info=True)
             raise
         instance.telegram = AccountTelegramProxy(self.telegram, profile)
         self.instances[profile.account_id] = instance

@@ -8,7 +8,6 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 from tg_bot import utils, static_keyboards as skb, keyboards as kb, CBT
-import telebot.apihelper
 from Utils.plata_tools import validate_proxy, check_proxy, build_proxy
 from Utils import plata_tools
 import plata_accounts
@@ -16,7 +15,6 @@ from telebot.types import InlineKeyboardMarkup as K, InlineKeyboardButton as B
 
 if TYPE_CHECKING:
     from cardinal import Cardinal
-from tg_bot import keyboards as kb, CBT
 from telebot.types import CallbackQuery, Message
 import logging
 from threading import Thread

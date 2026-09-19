@@ -2,7 +2,7 @@
 
 PRODUCT_NAME = "PLATA"
 PRODUCT_FULL_NAME = "PLATA FunPay Automation"
-PRODUCT_VERSION = "0.1.2"
+PRODUCT_VERSION = "0.1.3"
 
 # Public PLATA releases are read from this repository's version tags.
 UPDATE_REPOSITORY = "hambinoWW/FunPay-PlataBot"

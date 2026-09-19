@@ -6,24 +6,37 @@ import os
 from configparser import ConfigParser
 import time
 import telebot
-from colorama import Fore, Style
+from colorama import Style
 from Utils.plata_tools import validate_proxy, hash_password, build_proxy, check_proxy
 from Utils.config_loader import load_main_config
+from Utils.logger import adapt_console_colors
 
 ORANGE = "\033[38;5;208m"
+TEXT = "\033[38;5;252m"
+GREEN = "\033[38;5;114m"
+RED = "\033[38;5;203m"
+
+
+def _refresh_palette() -> None:
+    """Подбирает цвета под возможности консоли (16-цветный фоллбек для старых Windows)."""
+    global ORANGE, TEXT, GREEN, RED
+    ORANGE = adapt_console_colors("\033[38;5;208m")
+    TEXT = adapt_console_colors("\033[38;5;252m")
+    GREEN = adapt_console_colors("\033[38;5;114m")
+    RED = adapt_console_colors("\033[38;5;203m")
 
 
 def setup_step(number: int, title: str, description: str) -> None:
     print(f"\n{ORANGE}{Style.BRIGHT}[Шаг {number}/5] {title}{Style.RESET_ALL}")
-    print(f"{Fore.WHITE}{description}{Style.RESET_ALL}")
+    print(f"{TEXT}{description}{Style.RESET_ALL}")
 
 
 def setup_input(label: str = "Введите значение") -> str:
-    return input(f"{ORANGE}> {Fore.WHITE}{label}: {Style.RESET_ALL}").strip()
+    return input(f"{ORANGE}> {TEXT}{label}: {Style.RESET_ALL}").strip()
 
 
 def setup_error(text: str) -> None:
-    print(f"{Fore.RED}Ошибка: {text}{Style.RESET_ALL}")
+    print(f"{RED}Ошибка: {text}{Style.RESET_ALL}")
 
 # locale#locale#locale
 default_config = {
@@ -165,28 +178,29 @@ def setup_telegram_proxy():
     config = load_main_config("configs/_main.cfg")
     print(
         f"\n{ORANGE}{Style.BRIGHT}Настройка прокси Telegram{Style.RESET_ALL}\n"
-        f"{Fore.WHITE}Формат: scheme://login:password@ip:port или ip:port. "
+        f"{TEXT}Формат: scheme://login:password@ip:port или ip:port. "
         f"Нажмите Enter, если прокси не нужен.{Style.RESET_ALL}")
     while True:
         try:
             proxy = input_proxy(set_telebot_proxy=True)
             username = telebot.TeleBot(config["Telegram"]["token"]).get_me().username
-            print(f"{Fore.GREEN}Telegram подключён: @{username}{Style.RESET_ALL}")
+            print(f"{GREEN}Telegram подключён: @{username}{Style.RESET_ALL}")
             break
         except Exception as ex:
             setup_error(f"Telegram недоступен через этот прокси: {ex}")
 
     config.set("Telegram", "proxy", proxy or "")
-    print(f"{Fore.GREEN}Настройки сохранены.{Style.RESET_ALL}")
+    print(f"{GREEN}Настройки сохранены.{Style.RESET_ALL}")
     with open("configs/_main.cfg", "w", encoding="utf-8") as f:
         config.write(f)
     time.sleep(5)
 
 
 def first_setup():
+    _refresh_palette()
     config = create_config_obj(default_config)
     print(f"\n{ORANGE}{Style.BRIGHT}Первичная настройка PLATA{Style.RESET_ALL}")
-    print(f"{Fore.WHITE}Основной конфигурационный файл не найден. "
+    print(f"{TEXT}Основной конфигурационный файл не найден. "
           f"Пройдите пять шагов, чтобы подключить FunPay и Telegram.{Style.RESET_ALL}")
 
     while True:
@@ -220,13 +234,13 @@ def first_setup():
 
     while True:
         print(
-            f"\n{Fore.WHITE}Создайте бота через @BotFather и вставьте полученный API-токен.{Style.RESET_ALL}")
+            f"\n{TEXT}Создайте бота через @BotFather и вставьте полученный API-токен.{Style.RESET_ALL}")
         token = setup_input("Telegram Bot Token")
         try:
             if not token or not token.split(":")[0].isdigit():
                 raise Exception("Неправильный формат токена")
             username = telebot.TeleBot(token).get_me().username
-            print(f"{Fore.GREEN}Telegram-бот подключён: @{username}{Style.RESET_ALL}")
+            print(f"{GREEN}Telegram-бот подключён: @{username}{Style.RESET_ALL}")
         except Exception as ex:
             s = ""
             if str(ex):
@@ -238,7 +252,7 @@ def first_setup():
     while True:
         print(
             f"\n{ORANGE}{Style.BRIGHT}[Шаг 4/5] Пароль панели{Style.RESET_ALL}\n"
-            f"{Fore.WHITE}Минимум 8 символов: строчная и заглавная буквы, а также цифра.{Style.RESET_ALL}")
+            f"{TEXT}Минимум 8 символов: строчная и заглавная буквы, а также цифра.{Style.RESET_ALL}")
         password = setup_input("Пароль")
         if len(password) < 8 or password.lower() == password or password.upper() == password or not any(
                 [i.isdigit() for i in password]):
@@ -259,8 +273,8 @@ def first_setup():
         config.set("Proxy", "enable", "1")
         config.set("Proxy", "check", "1")
 
-    print(f"\n{Fore.GREEN}{Style.BRIGHT}Настройка PLATA завершена.{Style.RESET_ALL}")
-    print(f"{Fore.WHITE}Конфигурация сохранена. Перезапустите PLATA, откройте своего Telegram-бота "
+    print(f"\n{GREEN}{Style.BRIGHT}Настройка PLATA завершена.{Style.RESET_ALL}")
+    print(f"{TEXT}Конфигурация сохранена. Перезапустите PLATA, откройте своего Telegram-бота "
           f"и отправьте команду /start или /menu.{Style.RESET_ALL}")
     with open("configs/_main.cfg", "w", encoding="utf-8") as f:
         config.write(f)

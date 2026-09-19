@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from bs4 import BeautifulSoup
 from tg_bot import utils
 
 logger = logging.getLogger("PLATA.modules.old_orders")
@@ -26,7 +25,6 @@ def _orders(account):
 
 def init(cardinal):
     if not cardinal.telegram: return
-    bot = cardinal.telegram.bot
     def command(message):
         send_orders(cardinal, message)
     cardinal.telegram.msg_handler(command, commands=["old_orders"])

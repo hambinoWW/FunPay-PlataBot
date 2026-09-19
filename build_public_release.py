@@ -3,8 +3,10 @@
 from pathlib import Path
 import zipfile
 
+from plata_identity import PRODUCT_VERSION
+
 ROOT = Path(__file__).resolve().parent
-OUTPUT = ROOT / "dist" / "PLATA-0.1.2-public.zip"
+OUTPUT = ROOT / "dist" / f"PLATA-{PRODUCT_VERSION}-public.zip"
 FILES = ["main.py", "first_setup.py", "plata_core.py", "plata.py", "plata_identity.py", "plata_accounts.py",
          "plata_runtime.py", "plata_analytics.py", "plata_plugins.py", "handlers.py",
          "requirements.txt", "Start.bat", "Setup.bat", "Dockerfile", "docker-compose.yml", ".dockerignore",
@@ -24,7 +26,11 @@ def build() -> Path:
             for path in (ROOT / directory).rglob("*"):
                 if path.is_file() and "__pycache__" not in path.parts:
                     archive.write(path, str(path.relative_to(ROOT)))
-        archive.write(ROOT / "configs" / "_main.example.cfg", "configs/_main.example.cfg")
+        example_config = ROOT / "configs" / "_main.example.cfg"
+        if example_config.exists():
+            archive.write(example_config, "configs/_main.example.cfg")
+        else:
+            print("warning: configs/_main.example.cfg не найден — пример конфига пропущен")
     return OUTPUT
 
 
